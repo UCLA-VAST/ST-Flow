@@ -30,7 +30,7 @@ ST-Flow outperforms prior automation approaches by breaking the limitations of p
 ---
 
 ### Main Technologies
-- **Python**: Main interface and build scripting (`stflow/`, `setup.py`).
+- **Python**: Main interface (`stflow/`); packaging in `pyproject.toml` (scikit-build-core).
 - **C++**: MLIR dialects and passes implementation (`mlir/`).
 - **LLVM / MLIR (v20)**: Core compiler infrastructure. The build is pinned to LLVM 20 —
   see [Building and Running](#building-and-running).
@@ -71,99 +71,87 @@ The artifact appendix and reproducibility checklist are under [`docs/ae/`](docs/
 ## Building and Running
 <!-- docs:install:start -->
 
-The procedure below was validated from a clean clone of the `PACT26` tag on Ubuntu
-(x86_64, WSL2 kernel 6.18), using the prebuilt LLVM/MLIR release and a fresh
-Python 3.12.2 environment. It ends with all 66 tests in `test/` passing.
+ST-Flow installs in one of three ways. Start with Tier 1 and move down only if it does
+not work on your system; every tier ends with the same installed `stflow` package.
 
-### Prerequisites
-
-| | Requirement | Needed for | Notes |
+| Tier | Command | Needs | Time |
 |---|---|---|---|
-| 1 | **Python 3.12** | everything | The pinned `torch` / `torch_mlir` wheels are `cp312`-only. Not 3.11, not 3.13. |
-| 2 | **LLVM/MLIR 20 with Python bindings** | building `mlir/` | Use the prebuilt release below. |
-| 3 | **CMake ≥ 3.20 and Ninja** | building `mlir/` | |
-| 4 | **Vitis HLS** | running designs | Validated with 2024.2. Needed by csim, which is on by default. |
-| 5 | **AMPL** (with a MINLP-capable solver) | MINLP-based DSE | Every `test/*/test_config.yaml` selects `minlp`. |
-| 6 | **TAPA / RapidStream** | the TAPA backend only | Not needed when `target_tool: vitis`. |
+| **1. Prebuilt wheel** | `pip install stflow` | Linux x86_64, glibc ≥ 2.34 (Ubuntu 22.04+, Debian 12+, RHEL/Rocky 9+) | ~1 min |
+| **2. From source, prebuilt LLVM** | `pip install .` | the same, plus a C/C++ toolchain | ~10–20 min |
+| **3. From source, LLVM too** | `scripts/build_llvm.sh`, then `pip install .` | any Linux x86_64 with a C++17 compiler | 1–2 h |
 
-Only items 1–3 are needed to *build* the compiler. Items 4–5 are needed to reproduce
-the test suite.
+All tiers need **Python 3.12** (the pinned PyTorch wheels are `cp312`-only; not 3.11 or
+3.13) built with `bz2` support (`python -c "import bz2"` must work). Running designs also
+needs the backend tools: **Vitis HLS** (validated with 2024.2) for C-simulation, which
+is on by default, and **AMPL** with a MINLP-capable solver for MINLP-based DSE.
+**XRT** is only needed to run a generated bitstream on an FPGA board; without it, designs
+are built for C-simulation only.
 
-### Step 0 — Get the code
-
-```bash
-git clone https://github.com/UCLA-VAST/ST-Flow.git
-cd ST-Flow
-```
-
-The `extern/llvm-project` submodule is only needed to build LLVM from source (see Step 1),
-so a plain clone is enough; `git submodule update --init` fetches it if you need it.
-
-### Step 1 — LLVM/MLIR
-
-ST-Flow links against a **specific LLVM/MLIR build** (LLVM 20, Release + assertions,
-Python bindings enabled). The prebuilt tarball (`llvm-stflow-ubuntu-latest.tar.gz`,
-1.3 GB) is archived in the [Zenodo record](https://doi.org/10.5281/zenodo.21881993);
-extract it so that `~/opt/llvm-stflow/lib/cmake/mlir/MLIRConfig.cmake` exists:
+### Python environment
 
 ```bash
-curl -LO https://zenodo.org/records/21881993/files/llvm-stflow-ubuntu-latest.tar.gz
-mkdir -p ~/opt && tar xzf llvm-stflow-ubuntu-latest.tar.gz -C ~/opt
-test -f ~/opt/llvm-stflow/lib/cmake/mlir/MLIRConfig.cmake && echo OK
+python3.12 -m venv ~/.venvs/stflow && source ~/.venvs/stflow/bin/activate
+# or: pyenv virtualenv 3.12 stflow && pyenv activate stflow
 ```
 
-`~/opt/llvm-stflow` is the default location `env.sh` probes, so nothing else is needed.
-To use an LLVM installed elsewhere, `export STFLOW_LLVM_DIR=/path/to/llvm` before
-sourcing `env.sh`. Building LLVM yourself from `extern/llvm-project` also works but takes
-hours; the submodule is pinned to the matching commit.
-
-### Step 2 — Python environment
+### Tier 1 — prebuilt wheel
 
 ```bash
-pyenv virtualenv 3.12.2 stflow
-pyenv activate stflow            # or: pyenv local stflow
+pip install stflow
+pip install -r https://raw.githubusercontent.com/UCLA-VAST/ST-Flow/main/requirements-ml.txt
 ```
 
-### Step 3 — Python dependencies
+The second line installs the pinned PyTorch front end (`torch`, `torchvision`,
+`torch_mlir`) from the [Zenodo record](https://doi.org/10.5281/zenodo.21881993); see
+[Pinned ML toolchain](#pinned-ml-toolchain) for why it cannot come from PyPI. If pip
+reports that no wheel matches your platform, it falls back to building from source,
+which is Tier 2.
 
-**Install these before sourcing `env.sh`.** `env.sh` resolves `pybind11_DIR` by importing
-`pybind11` from the active interpreter; if pybind11 is not installed yet the variable is
-left empty and the CMake configure step fails.
+### Tier 2 — from source, with the prebuilt LLVM/MLIR
 
 ```bash
-pip install -r requirements.txt              # build + tooling deps
-pip install -r requirements-ml.txt           # pinned torch / torchvision / torch_mlir
+git clone https://github.com/UCLA-VAST/ST-Flow.git && cd ST-Flow
+pip install .
+pip install -r requirements-ml.txt
 ```
 
-The three ML wheels come from the [Zenodo record](https://doi.org/10.5281/zenodo.21881993)
-rather than PyPI; see [Pinned ML toolchain](#pinned-ml-toolchain) for why. Offline, install
-them from a local copy instead: `bash scripts/install_ml_wheels.sh wheels/`.
+The build needs LLVM/MLIR 20 (Release + assertions, Python bindings), and looks for it in
+this order:
 
-### Step 4 — Build
+1. `STFLOW_LLVM_DIR`, or `MLIR_DIR` / `LLVM_DIR`, if set;
+2. `~/opt/llvm-stflow`;
+3. a copy it downloaded before, in `~/.cache/stflow/llvm-stflow` (or under `$XDG_CACHE_HOME`);
+4. otherwise it **downloads** the prebuilt release (1.3 GB) from the Zenodo record into
+   that cache, checking its MD5 first. Set `STFLOW_FETCH_LLVM=OFF` to forbid this.
+
+If the prebuilt LLVM cannot run on your system, the build stops at configure time with a
+message saying so; continue with Tier 3. The C++ build uses the clang shipped with that
+LLVM. To bound its parallelism on a memory-limited machine, set
+`CMAKE_BUILD_PARALLEL_LEVEL` (for example `8`). For development, `pip install -e .`
+gives an editable install; add `-C cmake.build-type=Debug` for an assertions-enabled
+debug build of the C++ passes.
+
+### Tier 3 — build LLVM/MLIR from source too
 
 ```bash
-source env.sh
-export NUM_THREADS=6              # see the note below — do not use $(nproc)
-python -m pip install -v -e .
+git clone https://github.com/UCLA-VAST/ST-Flow.git && cd ST-Flow
+bash scripts/build_llvm.sh ~/opt/llvm-stflow     # fetches the pinned submodule; 1-2 h
+pip install .                                    # finds ~/opt/llvm-stflow
+pip install -r requirements-ml.txt
 ```
 
-`env.sh` prints the LLVM it selected; confirm it is the one you expect before the build
-starts. `setup.py` overrides `build_ext` to run CMake/Ninja over `mlir/`, then symlinks
-`mlir/build/tools/streamhls/_mlir` to `stflow/_mlir`.
+`scripts/build_llvm.sh` builds the `extern/llvm-project` submodule, pinned to the commit
+the prebuilt release was made from, with the same configuration. It uses clang if found
+and gcc otherwise; set `NUM_THREADS` to bound its parallelism. On a cluster, run it inside
+an allocation, e.g. `srun -c32 --mem=64G bash scripts/build_llvm.sh`.
 
-> **Cap the parallelism.** The MLIR debug build is memory-bound, not core-bound: its link
-> and TableGen steps are memory-hungry, so one job per core exhausts RAM and gets the build
-> OOM-killed — this happens on a 20-core/23 GB host, so a high core count is no protection.
-> `NUM_THREADS=6` is a safe ceiling regardless of how many cores you have. If `NUM_THREADS`
-> is unset, `setup.py` runs a fully unbounded `ninja`.
-
-Expect roughly 15–30 minutes at `NUM_THREADS=6`. Verify:
+### Verify the installation
 
 ```bash
 python -c "from stflow._mlir._mlir_libs import _streamhls; import stflow.main; print('ok')"
 ```
 
-### Step 5 — Backend tools
+### Backend tools
 
 ```bash
 source local_env.sh
@@ -225,7 +213,7 @@ verifies the three imports afterwards.
 **`static assertion failed: def_property family does not currently support keep_alive`**
 while compiling `IRCore.cpp`. You have pybind11 3.x. MLIR 20's Python bindings only build
 against pybind11 2.x; `requirements.txt` pins `pybind11>=2.10,<3`. After downgrading you
-must `rm -rf mlir/build` — the CMake cache holds the old pybind11 paths.
+must `rm -rf build/` — the CMake cache holds the old pybind11 paths.
 
 **`unrecognized arguments: -n10`** from pytest. `pytest-xdist` is missing; reinstall from
 `requirements.txt`.
@@ -236,20 +224,13 @@ bzip2 support (common with `pyenv` when `libbz2-dev` was missing at build time),
 torch's FX export needs it. Install `libbz2-dev` (plus `liblzma-dev`), rebuild the
 interpreter, and recreate the virtualenv; `python -c "import bz2"` must succeed.
 
-**csim fails with `fatal error: xrt/xrt_kernel.h: No such file or directory`**, after a log
-warning `XILINX_XRT is set to ..., but this path does not exist on this node`. An
-environment (often a cluster module) exports `XILINX_XRT` pointing at an XRT install that
-is not present on the machine running the test, and it takes precedence over the vendored
-headers in `extern/xrt`. `unset XILINX_XRT` (or point it at a real XRT install) before
-running.
+**`This design was built without XRT, so it can only run in C-simulation`** when running
+a bitstream. No XRT install was found when the design was built (ST-Flow looks at
+`XILINX_XRT`, then `/opt/xilinx/xrt`). Install XRT, or point `XILINX_XRT` at it, and
+rebuild the design.
 
 **`ModuleNotFoundError: No module named 'torch'`** when importing `stflow`. The ML
 toolchain was not installed; run `bash scripts/install_ml_wheels.sh wheels/`.
-
-**`Warning: Source path .../mlir/build/tools/streamhls/_mlir does not exist. Skipping
-symlink creation.`** during install. The C++ build did not produce the Python extension,
-but `setup.py` reports this as a warning and exits 0 — the install will look successful
-and then fail at import. Scroll back for the real CMake/Ninja error.
 
 **A csim test fails, then passes when re-run alone.** Parallel csim under xdist is
 load-sensitive when the worker count exceeds the available cores.
@@ -274,9 +255,10 @@ set `dse_options.permutation_dse` / `unrolling_dse` to a heuristic (`sa`, `ga`, 
 - **Environment**: `env.sh` handles LLVM/MLIR discovery and detects SLURM automatically;
   `local_env.sh` layers on the backend tools (Vitis HLS, TAPA, AMPL) needed to *run*
   designs. Both are safe to source repeatedly.
-- **Build Integration**: The C++ build is orchestrated by `setup.py` (overriding
-  `build_ext`), making local development seamless by allowing standard `pip install -e .`
-  commands. Set `NUM_THREADS` to bound the parallelism.
+- **Build Integration**: `pyproject.toml` builds `mlir/` with scikit-build-core into
+  `build/<wheel-tag>/` and installs the compiled bindings into the package as
+  `stflow/_mlir`. Use `pip install -e .` while developing; set
+  `CMAKE_BUILD_PARALLEL_LEVEL` to bound the parallelism.
 - **Testing**: Add new test cases to the appropriate category folder within the `test/`
   directory. Tests should be named with the `test_` prefix. Per-category policy lives in
   that category's `test_config.yaml`.

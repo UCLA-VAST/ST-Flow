@@ -1,0 +1,100 @@
+# ST-Flow build and package metadata (PEP 517/518/621).
+#
+# scikit-build-core runs CMake on mlir/ out-of-source and `cmake --install`s the
+# compiled bindings into the wheel as stflow/_mlir, so an installed ST-Flow is
+# self-contained: LLVM/MLIR are statically linked into the extension, and the
+# extensions find each other through RUNPATH $ORIGIN. No LLVM is needed at runtime.
+#
+# Installation tiers (see the installation guide):
+#   1. pip install stflow           prebuilt wheel from PyPI
+#   2. pip install .                build from a checkout against the prebuilt
+#                                   LLVM/MLIR (found locally or downloaded)
+#   3. scripts/build_llvm.sh, then  build LLVM/MLIR from extern/llvm-project first
+#      STFLOW_LLVM_DIR=... pip install .
+
+[build-system]
+# pybind11 3.x cannot compile MLIR 20's Python bindings (IRCore.cpp: "def_property
+# family does not currently support keep_alive").
+requires = ["scikit-build-core>=0.10", "pybind11>=2.10,<3"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "stflow"
+version = "1.0.0"
+description = "ST-Flow: a hardware compiler for automating spatial-temporal dataflow acceleration on FPGAs"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "licenses/*"]
+authors = [
+  { name = "Suhail Basalama" },
+  { name = "Stéphane Pouget" },
+  { name = "Jason Cong" },
+]
+keywords = ["FPGA", "HLS", "MLIR", "dataflow", "accelerator", "compiler", "PyTorch"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Compilers",
+  "Topic :: System :: Hardware",
+]
+
+# What `import stflow` needs. pybind11 is a runtime dependency, not just a build
+# one: the Vitis backend compiles each design's host wrapper with
+# `python -m pybind11 --includes`.
+#
+# The PyTorch front end (torch / torchvision / torch_mlir) is not listed: it is
+# pinned to an archived nightly that exists only as direct-URL wheels, which index
+# metadata cannot reference. Install it alongside with
+#     pip install -r requirements-ml.txt
+dependencies = [
+  "numpy",
+  "PyYAML",
+  "ml_dtypes",
+  "pybind11>=2.10,<3",
+]
+
+[project.optional-dependencies]
+# The test suite.
+test = ["pytest", "pytest-xdist", "pytest-timeout", "transformers==4.51.0"]
+# The PACT '26 artifact pipeline (scripts/ae_verify.sh, evplot, evtable, ...).
+# matplotlib is pinned to the version that produced the paper's figures.
+ae = ["matplotlib==3.10.5", "pandas", "scipy", "tabulate", "rich", "xmltodict"]
+# Development tooling.
+dev = ["stflow[test,ae]", "black==24.8.0", "pylint==3.0.2", "clang-format"]
+
+[project.urls]
+Homepage = "https://github.com/UCLA-VAST/ST-Flow"
+Documentation = "https://st-flow.readthedocs.io"
+Source = "https://github.com/UCLA-VAST/ST-Flow"
+Issues = "https://github.com/UCLA-VAST/ST-Flow/issues"
+Artifact = "https://doi.org/10.5281/zenodo.21881993"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.source-dir = "mlir"
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+# A persistent build directory keeps `pip install .` incremental across rebuilds.
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["stflow"]
+# The extensions load the aggregate library by its SONAME (.so.20.0git). The unversioned
+# .so is a link-time symlink, which a wheel would store as a second 150 MB copy.
+wheel.exclude = ["stflow/_mlir/_mlir_libs/libStreamHLSMLIRAggregateCAPI.so"]
+# Only our own component: MLIR's CMake brings many LLVM install rules into scope,
+# and a component-less install would sweep them into the wheel.
+install.components = ["StreamHLSMLIRPythonModules"]
+# The sdist is the source of Tier 2 when no wheel matches: keep it to the inputs
+# the build needs.
+sdist.exclude = ["extern/llvm-project", "PACT26_Artifacts", "build", "mlir/build",
+                 "test/**/*.prj", "ae_verify_out", "docs/_build", "wheels"]
+
+[tool.scikit-build.cmake.define]
+LLVM_TARGETS_TO_BUILD = "host"
+LLVM_ENABLE_ASSERTIONS = "ON"
+MLIR_ENABLE_BINDINGS_PYTHON = "ON"
+STFLOW_FETCH_LLVM = { env = "STFLOW_FETCH_LLVM", default = "ON" }

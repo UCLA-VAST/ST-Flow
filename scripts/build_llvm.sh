@@ -1,52 +1,76 @@
 #!/usr/bin/env bash
+#
+# Build LLVM/MLIR 20 from the pinned extern/llvm-project submodule (installation
+# Tier 3). Use this only when the prebuilt release does not run on your system (for
+# example glibc < 2.34). Expect 30-90 minutes on 16+ cores and ~30 GB of disk.
+#
+#   bash scripts/build_llvm.sh [install-dir]        # default: ~/opt/llvm-stflow
+#
+# then build ST-Flow against it:
+#
+#   STFLOW_LLVM_DIR=~/opt/llvm-stflow pip install .
+#
+# Environment:
+#   NUM_THREADS   parallel jobs (default: half the cores; linking is memory-bound)
+#   CC / CXX      compilers (default: clang/clang++ if found, else gcc/g++)
+#
+# Run it inside a Slurm allocation yourself if your cluster needs one, e.g.
+#   srun -c32 --mem=64G bash scripts/build_llvm.sh
 
-# Exit on error
-set -e
+set -euo pipefail
 
 PRJ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${1:-$HOME/opt/llvm-stflow}"
-BUILD_DIR="$PRJ_ROOT/extern/llvm-project/build"
+SRC_DIR="$PRJ_ROOT/extern/llvm-project"
+BUILD_DIR="$SRC_DIR/build"
+NUM_THREADS="${NUM_THREADS:-$(( $(nproc) / 2 > 1 ? $(nproc) / 2 : 1 ))}"
 
-echo "Building LLVM/MLIR..."
-echo "Install Directory: $INSTALL_DIR"
-echo "Build Directory: $BUILD_DIR"
+PY="$(command -v python3 || command -v python)"
+if ! "$PY" -c 'import sys; sys.exit(sys.version_info[:2] != (3, 12))'; then
+    echo "Error: activate the Python 3.12 environment you will install ST-Flow into" >&2
+    echo "       (the MLIR Python bindings are built for that interpreter)." >&2
+    exit 1
+fi
+# MLIR's Python bindings need these at configure time (pybind11 3.x cannot build them).
+# CMake and Ninja come from pip too, so the build does not depend on whatever (possibly
+# shimmed or outdated) versions the system PATH provides.
+"$PY" -m pip install -q "pybind11>=2.10,<3" numpy PyYAML "cmake>=3.20" ninja
+export PATH="$(dirname "$PY"):$PATH"
 
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$BUILD_DIR"
-
-cd "$BUILD_DIR"
-
-# Check if SLURM is available for the configuration step
-CONf_CMD=""
-if command -v srun >/dev/null 2>&1; then
-    CONF_CMD="srun --export=ALL"
+if [ ! -f "$SRC_DIR/llvm/CMakeLists.txt" ]; then
+    echo "Fetching the pinned LLVM submodule (shallow)..."
+    git -C "$PRJ_ROOT" submodule update --init --depth 1 extern/llvm-project
 fi
 
-$CONF_CMD cmake -G Ninja ../llvm \
+: "${CC:=$(command -v clang || command -v gcc)}"
+: "${CXX:=$(command -v clang++ || command -v g++)}"
+LLD_FLAG=()
+if command -v ld.lld >/dev/null 2>&1; then
+    LLD_FLAG=(-DLLVM_ENABLE_LLD=ON)
+fi
+
+echo "LLVM source : $SRC_DIR"
+echo "Install dir : $INSTALL_DIR"
+echo "Compilers   : $CC / $CXX ${LLD_FLAG:+(lld)}"
+echo "Parallelism : $NUM_THREADS"
+
+cmake -G Ninja -S "$SRC_DIR/llvm" -B "$BUILD_DIR" \
     -DLLVM_ENABLE_PROJECTS="clang;mlir" \
     -DLLVM_BUILD_EXAMPLES=OFF \
     -DLLVM_TARGETS_TO_BUILD="host" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_ASSERTIONS=ON \
     -DLLVM_INSTALL_UTILS=ON \
-    -DCMAKE_C_COMPILER=clang \
-    -DCMAKE_CXX_COMPILER=clang++ \
-    -DLLVM_ENABLE_LLD=ON \
+    -DCMAKE_C_COMPILER="$CC" \
+    -DCMAKE_CXX_COMPILER="$CXX" \
+    "${LLD_FLAG[@]}" \
     -DLLVM_ENABLE_BINDINGS=OFF \
     -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-    -DPython3_EXECUTABLE=$(which python) \
+    -DPython3_EXECUTABLE="$PY" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR"
 
-echo "Configuration complete. Starting build..."
+cmake --build "$BUILD_DIR" --target install -j "$NUM_THREADS"
 
-# Run building with srun if available
-if command -v srun >/dev/null 2>&1; then
-    srun --export=ALL -c32 --mem=64GB ninja install
-else
-    # Fallback to local build if no Slurm
-    num_cores=$(nproc)
-    ninja -j$num_cores install
-fi
-
+echo
 echo "LLVM/MLIR installed to $INSTALL_DIR"
-echo "You can now use it by setting: export STFLOW_LLVM_DIR=$INSTALL_DIR"
+echo "Build ST-Flow against it with:  STFLOW_LLVM_DIR=$INSTALL_DIR pip install ."

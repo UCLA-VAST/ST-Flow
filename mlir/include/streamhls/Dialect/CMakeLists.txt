@@ -120,11 +120,15 @@ set(_source_components
   MLIRPythonExtension.RegisterEverything
 )
 
+# Install into `stflow/_mlir`, the import path the bindings are compiled for
+# (MLIR_PYTHON_PACKAGE_PREFIX=stflow._mlir.), so a wheel carries the compiler. The
+# aggregate library sits in `_mlir_libs/`, next to the extensions that link it: they
+# carry RUNPATH $ORIGIN, which resolves there.
 add_mlir_python_common_capi_library(StreamHLSMLIRAggregateCAPI
   INSTALL_COMPONENT StreamHLSMLIRPythonModules
-  INSTALL_DESTINATION _mlir
-  OUTPUT_DIRECTORY "${OUT_MLIR_PYTHON_PACKAGES_DIR}/_mlir"
-  RELATIVE_INSTALL_ROOT "../.."
+  INSTALL_DESTINATION stflow/_mlir/_mlir_libs
+  OUTPUT_DIRECTORY "${OUT_MLIR_PYTHON_PACKAGES_DIR}/_mlir/_mlir_libs"
+  RELATIVE_INSTALL_ROOT "../../.."
   DECLARED_HEADERS
     MLIRPythonCAPI.HeaderSources
   DECLARED_SOURCES
@@ -133,7 +137,7 @@ add_mlir_python_common_capi_library(StreamHLSMLIRAggregateCAPI
 
 add_mlir_python_modules(StreamHLSMLIRPythonModules
   ROOT_PREFIX "${OUT_MLIR_PYTHON_PACKAGES_DIR}/_mlir"
-  INSTALL_PREFIX "_mlir"
+  INSTALL_PREFIX "stflow/_mlir"
   DECLARED_SOURCES ${_source_components}
   COMMON_CAPI_LINK_LIBS
     StreamHLSMLIRAggregateCAPI

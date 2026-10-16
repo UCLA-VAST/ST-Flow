@@ -1,4 +1,4 @@
-./build
+/build/
 mlir/build
 e2e
 *.log
@@ -67,7 +67,6 @@ PACT26_Artifacts/
 actions-runner
 .agent/
 .agents/
-.github/
 .opencode/
 docs/agents/
 docs/Matt_Flow.md

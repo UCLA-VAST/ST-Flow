@@ -19,6 +19,10 @@ reproducibility checklist) and [`docs/ae/artifact_appendix.tex`](docs/ae/artifac
 
 **Badges requested:** Available, Functional, Reproduced.
 
+> **Version note.** This guide describes the evaluated revision, git tag `PACT26`
+> (`git checkout PACT26`), identical to the Zenodo record. Later revisions install
+> differently (`pip install stflow`; see [README.md](README.md#building-and-running)).
+
 ---
 
 ## What this artifact is
