@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import pandas as pd
+import sys
+
+import fnmatch
+
+# Add project root to sys.path
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(root)
+
+from scripts.table.table_gen import (generate_ppa_table, generate_ppa_summary_table,
+                                     generate_gpt2_onboard_table, generate_gpt2_dse_stats_table,
+                                     generate_robustness_table)
+
+def matches_filter(name, pattern_str):
+    """Checks if name matches any of the comma-separated patterns."""
+    if not pattern_str or pattern_str == "*":
+        return True
+    patterns = pattern_str.split(',')
+    return any(fnmatch.fnmatch(str(name), p.strip()) for p in patterns)
+
+def filter_df(df, args):
+    """Applies strategy and benchmark filters to the dataframe."""
+    initial_len = len(df)
+    
+    if hasattr(args, 'strategy') and args.strategy:
+        df = df[df['config'].apply(lambda x: matches_filter(x, args.strategy))]
+    
+    if hasattr(args, 'bench') and args.bench != "*":
+        df = df[df['benchmark'].apply(lambda x: matches_filter(x, args.bench))]
+        
+    if len(df) == 0:
+        print(f"Warning: Filtering reduced dataset from {initial_len} to 0 rows. Check your filters.")
+    elif len(df) < initial_len:
+        print(f"Filtering: {initial_len} -> {len(df)} rows.")
+        
+    return df
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluation Table Generation Utility")
+    parser.add_argument("action", choices=["ppa_detailed", "ppa_summary", "gpt2_onboard",
+                                          "gpt2_dse_stats", "robustness"],
+                        help="Table action: ppa_detailed, ppa_summary, gpt2_onboard, "
+                             "gpt2_dse_stats, or robustness")
+    parser.add_argument("-s", "--strategy", "--filter", help="Strategy pattern (glob, e.g. '*minlp*')")
+    parser.add_argument("-b", "--bench", "--benchmark", default="*", help="Benchmark pattern (glob)")
+    parser.add_argument("--csv", default="all.csv", help="Path to input CSV")
+    parser.add_argument("--bitstream", action="store_true", help="Use bitstream resources")
+    parser.add_argument("-o", "--out", help="Output file")
+
+    args = parser.parse_args()
+
+    # Resolve input file path
+    if os.path.isabs(args.csv) or args.csv.startswith("./") or args.csv.startswith("../"):
+        args.csv = os.path.abspath(args.csv)
+    
+    if not os.path.exists(args.csv):
+        print(f"Error: CSV file not found at {args.csv}")
+        return
+
+    df = pd.read_csv(args.csv)
+    df.columns = [c.strip() for c in df.columns]
+
+    df = filter_df(df, args)
+    
+    if df.empty:
+        return
+
+    if args.action == "ppa_summary":
+        latex = generate_ppa_summary_table(df, use_bitstream=args.bitstream)
+    elif args.action == "gpt2_onboard":
+        latex = generate_gpt2_onboard_table(df)
+    elif args.action == "gpt2_dse_stats":
+        latex = generate_gpt2_dse_stats_table(df)
+    elif args.action == "robustness":
+        latex = generate_robustness_table(df)
+    else:
+        latex = generate_ppa_table(df, config_label=args.strategy, use_bitstream=args.bitstream)
+
+    out_path = args.out
+    if not out_path:
+        out_name = f"{args.action}_table.tex"
+        # Always default to current directory if not specified
+        out_path = os.path.join(os.getcwd(), out_name)
+    
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, 'w') as f:
+        f.write(latex)
+    
+    print(f"LaTeX table saved to {out_path}")
+    
+    # Also print a small preview of the first few lines
+    print("\n" + "="*40)
+    print("TABLE PREVIEW (First 10 lines)")
+    print("="*40)
+    print("\n".join(latex.split("\n")[:10]))
+    print("...")
+    print("="*40 + "\n")
+
+if __name__ == "__main__":
+    main()

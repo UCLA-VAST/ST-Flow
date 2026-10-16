@@ -1,0 +1,244 @@
+% Artifact Appendix for:
+%   ST-Flow: A Hardware Compiler for Spatial-Temporal Dataflow Acceleration (PACT '26)
+%
+% Follows the cTuning/ACM template:
+%   https://github.com/ctuning/artifact-evaluation/blob/master/docs/template/ae.tex
+%
+% To include in the camera-ready, \input this file after \bibliography, or paste the
+% body below into main.tex. It expects \usepackage{hyperref} (main.tex already loads it).
+%
+% This is the short-form derivative of ARTIFACT_EVALUATION.md and docs/ae/checklist.md;
+% if any of the three ever disagree, ARTIFACT_EVALUATION.md is authoritative.
+
+\appendix
+\section{Artifact Appendix}
+
+\subsection{Abstract}
+
+The artifact contains the ST-Flow compiler---a Python driver orchestrating an MLIR-based
+C++ backend that lowers PyTorch models and affine programs to FPGA streaming dataflow
+accelerators---together with the full archived record of the paper's 425 experiments
+(5.6\,GB, 41{,}874 files: generated sources, solver traces, HLS/implementation reports and
+on-board execution logs). Reproducing every experiment from source needs days of licensed
+Vivado time and a Xilinx Alveo U55C, so a single command instead replays the analysis
+pipeline over the archives and regenerates every figure and table in the paper in about
+eleven seconds: the consolidated CSVs and \LaTeX{} tables come back byte-identical, and the
+figure PDFs differ only in their embedded creation timestamp. The artifact is organized in
+four tiers, so a reviewer with no FPGA and no HLS licence can still validate the paper's
+numbers end to end, and can additionally build the compiler and run its 66-test suite with
+only Vitis HLS. The artifact is available for download from Zenodo at \url{https://doi.org/10.5281/zenodo.21881993}. We are applying for the \emph{Available}, \emph{Functional} and
+\emph{Reproduced} badges.
+
+\subsection{Artifact check-list (meta-information)}
+
+{\small
+\begin{itemize}
+  \item {\bf Algorithm: } Spatial-temporal hardware mapping via structural/temporal
+    kernel clustering; non-divisor loop tiling; design space exploration by MINLP,
+    simulated annealing and genetic algorithm over a closed-form analytical latency and
+    resource model.
+  \item {\bf Program: } No standard suite. Six DNN workloads (MLP-Mixer, RWKV
+    channel-mix, TabM, SwiGLU, DIN, MNIST MLP), eight synthetic dataflow topologies,
+    seven Polybench kernels, and GPT-2 Tiny as a case study --- all PyTorch modules
+    under \texttt{test/}, none need downloading.
+  \item {\bf Compilation: } LLVM/MLIR~20 with Python bindings (prebuilt release
+    provided); CMake~$\geq$~3.20 and Ninja; Python~3.12. Vitis HLS 2024.2 compiles the
+    generated accelerators.
+  \item {\bf Transformations: } The ST-Flow compiler itself: an MLIR dialect with DFG
+    solvers, transform passes and HLS/TAPA emission. Public, included, at the
+    evaluated revision.
+  \item {\bf Model / Data set: } Weights are seeded-random
+    (\texttt{torch.manual\_seed(42)}); inputs are synthetic tensors from the same
+    fixed seed. Nothing is downloaded.
+  \item {\bf Run-time environment: } Linux x86\_64, Python~3.12 with pinned
+    \texttt{torch}/\texttt{torch\_mlir} wheels. Vitis HLS/Vivado 2024.2 and XRT for
+    synthesis and on-board runs; AMPL (Gecode/Gurobi) for the MINLP solver. The
+    archived-data reproduction path needs Python only.
+  \item {\bf Hardware: } Xilinx Alveo U55C at 300\,MHz for bitstream generation and
+    on-board execution (Tier~4 only). Tiers~1--2 need only a Linux workstation.
+  \item {\bf Run-time state: } The Tier~2 path is insensitive to machine load. The
+    Tier~1 test suite runs HLS C-simulation in parallel and is load-sensitive; keep the
+    worker count at or below the core count.
+  \item {\bf Metrics: } Cycle counts (analytical prediction, Vitis min/max estimate,
+    RTL simulation, on-board); MAPE and Pearson correlation against RTL; speedup
+    relative to divisor-only tiling; DSP/BRAM/URAM utilization; area-delay product;
+    achieved clock frequency; DSE solution cost, wall-clock search time and
+    coefficient of variation.
+  \item {\bf Output: } Consolidated CSVs (\texttt{main.csv}, \texttt{gpt2.csv},
+    \texttt{codo.csv}, \texttt{gpt2\_dse\_traces.csv}), seven figure PDFs and four
+    \LaTeX{} tables, corresponding to Figures~3--6 and Tables~4--7 of the paper.
+  \item {\bf Experiments: } 171 main-sweep designs (three tiling strategies
+    $\times$ 14 workloads at three hardware-mapping strategies, plus Polybench and an
+    extra DSP-budget sweep for the CODO comparison), 240 GPT-2 Tiny DSE runs
+    (4 solvers $\times$ 20 repeats $\times$ 3 mappings), and 14 augmented CODO
+    baseline designs (9 more failed and are archived separately). Driven by
+    \texttt{PACT26\_Artifacts/experiments.sh}; checked by \texttt{scripts/ae\_verify.sh}.
+  \item {\bf How much disk space required (approximately)?: } $\sim$5.6\,GB archive
+    ($\sim$10\,GB after extraction), plus $\sim$5\,GB for the LLVM/MLIR install and
+    $\sim$5\,GB for the compiler build. Allow 20\,GB.
+  \item {\bf How much time is needed to prepare workflow (approximately)?: } About
+    10~minutes for the archived-data path (clone plus \texttt{pip install}); about
+    15--30~minutes more to build the compiler using the prebuilt LLVM.
+  \item {\bf How much time is needed to complete experiments (approximately)?: }
+    Tier~2 (all paper figures and tables): $\sim$11~seconds. Tier~1 (66-test suite):
+    $\sim$4~minutes at 11 workers on a 20-core host. Tier~3 (one design through HLS):
+    minutes to $\sim$1.5~hours per design. Tier~4 (bitstream and on-board): hours per design, days
+    for the full sweep.
+  \item {\bf Publicly available?: } Yes, as an Open Access archival record: \url{https://doi.org/10.5281/zenodo.21881993}.
+    Self-contained: source, all archived experiments, the prebuilt LLVM/MLIR toolchain
+    and the pinned Python wheels.
+  \item {\bf Code licenses (if publicly available)?: } Apache License 2.0.
+  \item {\bf Data licenses (if publicly available)?: } Creative Commons Attribution 4.0
+    for the archived experiment outputs.
+  \item {\bf Workflow automation framework used?: } No third-party framework. SLURM
+    for the cluster sweep (not needed to evaluate the artifact).
+  \item {\bf Archived (provide DOI)?: } \url{https://doi.org/10.5281/zenodo.21881993}
+\end{itemize}
+}
+
+\subsection{Description}
+
+\subsubsection{How to access}
+
+Download the archived record from Zenodo at \url{https://doi.org/10.5281/zenodo.21881993}. It is self-contained: the
+compiler at the evaluated revision, \texttt{PACT26\_Artifacts/} (the 5.6\,GB experiment
+archive), the prebuilt LLVM/MLIR~20 toolchain, and the pinned Python wheels that are no
+longer obtainable from any index. Nothing is fetched over the network during evaluation;
+the development repository is not public, so this record is the single point of access.
+Start from \texttt{ARTIFACT\_EVALUATION.md} at the top level, which states the supported
+claims and gives the tiered instructions summarized below.
+
+\subsubsection{Hardware dependencies}
+
+A Linux x86\_64 machine suffices for Tiers~1--2; the reproduction path is CPU-bound and
+needs no accelerator. Bitstream generation and on-board validation (Tier~4) require a
+Xilinx Alveo U55C, the card the paper's physical results were measured on. Reviewers
+without one can stop after Tier~3: the on-board claims are supported by archived
+implementation reports and execution logs.
+
+\subsubsection{Software dependencies}
+
+Python~3.12 (the pinned wheels are \texttt{cp312}-only) and LLVM/MLIR~20 with Python
+bindings, provided prebuilt since ST-Flow does not compile against distribution
+LLVM~17/18. Vitis HLS~2024.2 for C-simulation and synthesis, Vivado~2024.2 and XRT for
+bitstreams and on-board runs, and AMPL for the MINLP solver (a heuristic solver removes
+this dependency). Two pins matter: \texttt{pybind11$<$3} (3.x cannot compile the MLIR~20
+bindings) and \texttt{matplotlib==3.10.5} (the version that produced the paper's
+figures); both are recorded in \texttt{requirements.txt}. The ML front-end is pinned to a
+PyTorch nightly that upstream no longer serves, so the exact wheels are distributed with
+the artifact.
+
+\subsubsection{Data sets and Models}
+
+No external data sets or model checkpoints. All inputs are synthetic tensors from a
+fixed seed and all weights are seeded-random, so every experiment runs from a clean
+checkout with no downloads. The workloads are listed under Program above.
+
+\subsection{Installation}
+
+\begin{verbatim}
+tar xzf st-flow-pact26.tar.gz && cd st-flow-pact26
+python3.12 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+source env.sh
+\end{verbatim}
+
+Sufficient to reproduce every figure and table (Tier~2). To build the compiler itself
+(Tiers~1, 3, 4):
+
+\begin{verbatim}
+mkdir -p ~/opt && tar xzf llvm-stflow-ubuntu-latest.tar.gz -C ~/opt
+bash scripts/install_ml_wheels.sh wheels/
+source env.sh
+export NUM_THREADS=6      # bounded on purpose: one job per core OOMs the build
+python -m pip install -v -e .
+\end{verbatim}
+
+\texttt{README.md} documents the full procedure and troubleshooting.
+
+\subsection{Experiment workflow}
+
+\texttt{PACT26\_Artifacts/experiments.sh} is the script that produced the paper's data:
+it consolidates per-design reports into four CSVs, then drives \texttt{evplot} and
+\texttt{evtable} to emit each figure and table. It reads only archived reports and logs,
+so it needs no FPGA, HLS licence, solver or scheduler. \texttt{scripts/ae\_verify.sh}
+wraps it: regenerate into a scratch directory, leave the shipped reference untouched,
+diff the two.
+
+Generating new designs rather than replaying archived ones goes through \texttt{pytest}
+for a single design's DSE/C-simulation/synthesis/co-simulation (Tier~3), and that
+design's own \texttt{Makefile} (\texttt{make bitstream}) plus
+\texttt{STFLOW\_MODE=bitstream pytest} for its bitstream and on-board run (Tier~4). For
+the full design grid, \texttt{evgen} plus \texttt{evrun submit} drive the same steps as
+SLURM jobs.
+
+\subsection{Evaluation and expected results}
+
+\begin{verbatim}
+source env.sh
+bash scripts/ae_verify.sh
+\end{verbatim}
+
+Expected, in about eleven seconds: \texttt{RESULT: PASS} with 15 reproduced outputs and
+no mismatches --- the four CSVs and four \LaTeX{} tables byte-identical to the shipped
+reference, the seven figure PDFs identical in content with only their embedded creation
+timestamp differing. This validates the model-validation accuracy of
+Section~5.2 (MAPE 8.24\% on DNN, 17.82\% on synthetic, against 28.46--86.38\% for Vitis
+estimates), the non-divisor tiling speedups of Section~5.3
+($3.80\times$/$1.44\times$/$1.12\times$ for max-reuse/balanced/no-reuse), the area-delay
+comparison of Section~5.4, the $23.11\times$ latency and $10.65\times$ PPA advantage over
+CODO in Section~5.5, the GPT-2 DSE comparison of Section~5.6.1, and the on-board results
+of Section~5.6.2. Table~7 --- the one table the paper carries inline rather than
+\texttt{\textbackslash input}-ing --- is generated too and reproduces cell for cell. See
+\texttt{ARTIFACT\_EVALUATION.md} for the full C1--C7 claims table.
+
+Independently, \texttt{pytest test/} exercises the compiler itself: all 66 tests compile
+PyTorch models through the full pipeline and validate each design by HLS C-simulation
+against a PyTorch reference ($\sim$4~minutes, needs Vitis HLS, no FPGA).
+
+\subsection{Experiment customization}
+
+Hardware mapping strategy (\texttt{no\_reuse}, \texttt{balanced}, \texttt{max\_reuse}),
+tiling strategy, solver choice (\texttt{minlp}, \texttt{sa}, \texttt{ga},
+\texttt{random}, \texttt{fixed}), DSP budget, objective weights and backend are all
+fields of \texttt{STFlowConfig} (\texttt{stflow/config.py}), settable per test through
+the category's \texttt{test\_config.yaml}. \texttt{STFLOW\_MODE} switches a run between
+C-simulation, synthesis, co-simulation and bitstream execution. New workloads are added
+as PyTorch modules under \texttt{test/}; the sweep grid is defined by \texttt{evgen}.
+
+\subsection{Notes}
+
+HLS synthesis, bitstream generation and on-board execution can all be re-run from
+source, but they require a licensed Vitis HLS for synthesis, Vivado plus a physical Alveo U55C for the
+board.
+
+For MINLP-driven designs, a Tier~3 re-run on the same tool versions matches the archived
+numbers exactly: regenerating \texttt{01\_mlp\_mixer} and \texttt{06\_random\_mlp\_seq}
+end to end (all three mapping strategies, at the paper's 500-DSP budget) through DSE,
+HLS synthesis and RTL co-simulation reproduced every predicted-latency, RTL-cycle and DSP
+figure in \texttt{main.csv} cycle-for-cycle. What varies run to run: the SA and GA
+searches are stochastic by construction (the GPT-2 study is 20 independent runs per
+method), and Vitis HLS/Vivado are not bit-reproducible across tool patch levels, so on a
+different patch level cycle counts, resource totals, achieved frequency and even which
+designs route can move. The archived outputs are the reference for every reported
+number; a reviewer with neither the tools nor the card loses no claim, since the full
+implementation reports and on-board logs for all 425 experiments are archived.
+
+Two provenance notes may surprise a reviewer. Per-design DSE reports are named
+\texttt{reports/phoenix.csv} because the project was called Phoenix when the experiments
+were run and was renamed to ST-Flow afterwards; the reporting code accepts either name.
+And the CODO baseline designs were built from the third-party CODO artifact and
+augmented only with AXI-DMA interfaces, so they share ST-Flow's off-chip execution
+model --- 14 successful designs under \texttt{designs/} and 9 failures under
+\texttt{failed/} are archived with their full Vitis reports, and
+\texttt{scripts/codo/collect\_codo\_reports.py} re-derives \texttt{codo.csv} from them,
+so Figure~5 is reproducible even though the CODO toolchain itself is not included.
+
+\subsection{Methodology}
+
+Submission, reviewing and badging methodology:
+\begin{itemize}
+  \item \url{https://www.acm.org/publications/policies/artifact-review-and-badging-current}
+  \item \url{https://cTuning.org/ae}
+  \item \url{https://pact2026.github.io/ae/}
+\end{itemize}

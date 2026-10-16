@@ -1,0 +1,3 @@
+add_subdirectory(HLS)
+add_subdirectory(SharedLib)
+add_subdirectory(Translation)

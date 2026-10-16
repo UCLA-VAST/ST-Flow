@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+import os
+import pandas as pd
+import numpy as np
+import re
+import argparse
+
+def analyze(csv_path):
+    if not os.path.exists(csv_path):
+        print(f"Error: CSV file not found at {csv_path}")
+        return
+
+    df = pd.read_csv(csv_path)
+    df.columns = [c.strip() for c in df.columns]
+    
+    # Map config to u_strategy more reliably
+    def get_strat(c):
+        if 'ndiv_max' in c: return 'ndiv_max'
+        if 'ndiv_min' in c: return 'ndiv_min'
+        if 'div_min' in c: return 'div_min'
+        return 'other'
+    
+    # Extract series (e.g. 500, 2560)
+    def get_series(c):
+        match = re.search(r'(\d+)$', c)
+        return match.group(1) if match else 'unknown'
+    
+    df['u_strat'] = df['config'].apply(get_strat)
+    df['series'] = df['config'].apply(get_series)
+    
+    # Clean numeric columns
+    df['rtl_cycles'] = pd.to_numeric(df['rtl_cycles'], errors='coerce')
+    df = df[df['rtl_cycles'] > 0].copy()
+    
+    if df.empty:
+        print("No valid RTL results found in the provided CSV.")
+        return
+
+    # Pivot to compare u_strategy
+    pivot = df.pivot_table(index=['series', 'benchmark', 'test', 'hw_strategy'], 
+                           columns='u_strat', 
+                           values='rtl_cycles')
+    
+    # Ensure columns exist
+    for col in ['div_min', 'ndiv_min', 'ndiv_max']:
+        if col not in pivot.columns:
+            pivot[col] = np.nan
+
+    # Calculate speedups
+    pivot['speedup_ndiv_min'] = pivot['div_min'] / pivot['ndiv_min']
+    pivot['speedup_ndiv_max'] = pivot['div_min'] / pivot['ndiv_max']
+    pivot['imp_max_vs_min'] = pivot['ndiv_min'] / pivot['ndiv_max']
+
+    for series in sorted(pivot.index.get_level_values('series').unique()):
+        s_pivot = pivot.xs(series, level='series')
+        print("\n" + "="*80)
+        print(f"ANALYSIS FOR EXPERIMENT SERIES: {series}")
+        print("="*80)
+        
+        print("\nNDIV-MIN Improvements (Speedup relative to DIV-MIN)")
+        ndiv_min_imp = s_pivot[s_pivot['speedup_ndiv_min'] > 1.01].sort_values('speedup_ndiv_min', ascending=False)
+        if ndiv_min_imp.empty:
+            print("  No significant improvements found.")
+        else:
+            print(ndiv_min_imp[['div_min', 'ndiv_min', 'speedup_ndiv_min']].head(10))
+
+        print("\nNDIV-MAX Improvements (Speedup relative to NDIV-MIN)")
+        ndiv_max_imp = s_pivot[s_pivot['imp_max_vs_min'] > 1.01].sort_values('imp_max_vs_min', ascending=False)
+        if ndiv_max_imp.empty:
+            print("  No significant improvements found.")
+        else:
+            print(ndiv_max_imp[['ndiv_min', 'ndiv_max', 'imp_max_vs_min']].head(10))
+
+        print("\nAverage Speedup by Hardware Strategy (NDIV-MAX vs DIV-MIN Baseline)")
+        summary = s_pivot.groupby('hw_strategy')['speedup_ndiv_max'].mean()
+        print(summary)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Analyze non-divisor tiling strategy performance.")
+    parser.add_argument("--csv", default="study/data/all.csv", help="Path to input results CSV")
+    args = parser.parse_args()
+    
+    # Project root handling
+    root = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    csv_path = args.csv if os.path.isabs(args.csv) else os.path.join(root, args.csv)
+    
+    analyze(csv_path)

@@ -1,0 +1,22 @@
+# ST-Flow ML front-end: torch / torchvision / torch_mlir (Python 3.12, Linux x86_64).
+#
+# PREFERRED INSTALL — from the wheels bundled with the artifact:
+#
+#   bash scripts/install_ml_wheels.sh wheels/
+#
+# ALTERNATIVE — install straight from the archived Zenodo record (needs network access):
+#
+#   pip install -r requirements-ml.txt
+#
+# The URLs below are the permanent copies in https://doi.org/10.5281/zenodo.21881993,
+# the same files the artifact ships.
+#
+# Why these are not on PyPI: ST-Flow's front-end is pinned to the PyTorch nightly
+# `2.8.0.dev20250325`, because that is the build its Torch-MLIR was compiled against, and
+# download.pytorch.org retains only ~2 months of nightlies. These wheels are the only
+# surviving copies. The three move as a unit -- Torch-MLIR hard-pins that exact torch
+# build -- so do not upgrade one of them without rebuilding and revalidating Torch-MLIR.
+
+https://zenodo.org/records/21881993/files/torch-2.8.0.dev20250325%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl
+https://zenodo.org/records/21881993/files/torchvision-0.22.0.dev20250325%2Bcpu-cp312-cp312-linux_x86_64.whl
+https://zenodo.org/records/21881993/files/torch_mlir-20251004.590-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl

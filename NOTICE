@@ -1,0 +1,112 @@
+ST-Flow
+Copyright 2026 ST-Flow authors
+
+This product includes software developed as part of the ST-Flow project, licensed
+under the Apache License, Version 2.0 (see LICENSE).
+
+This distribution bundles or derives from the following third-party works. Their
+copyright notices are reproduced here as required by their licenses, the per-file
+notices in the sources are retained, and the full license texts that differ from
+LICENSE are in licenses/.
+
+------------------------------------------------------------------------------
+ScaleHLS
+Copyright 2020-2021 The ScaleHLS Authors
+Licensed under the Apache License, Version 2.0 with LLVM Exceptions
+(licenses/ScaleHLS.txt)
+https://github.com/UIUC-ChenLab/scalehls
+
+The HLS/Dataflow dialect and parts of the analysis and lowering passes are adopted
+from ScaleHLS, directly or through Stream-HLS (which records the same provenance in
+its license/ScaleHLS.txt), and have since been modified and extended. Each of these
+files carries the ScaleHLS notice:
+
+  mlir/include/streamhls/Dialect/Dataflow/IR/Attributes.td
+  mlir/include/streamhls/Dialect/Dataflow/IR/Dataflow.h
+  mlir/include/streamhls/Dialect/Dataflow/IR/Dataflow.td
+  mlir/include/streamhls/Dialect/Dataflow/IR/Interfaces.td
+  mlir/include/streamhls/Dialect/Dataflow/IR/Ops.td
+  mlir/include/streamhls/Dialect/Dataflow/IR/Types.td
+  mlir/include/streamhls/Dialect/Dataflow/Transforms/Estimator.h
+  mlir/include/streamhls/Dialect/Dataflow/Transforms/Passes.td (in part)
+  mlir/include/streamhls/InitAllDialects.h
+  mlir/include/streamhls/InitAllPasses.h
+  mlir/lib/Dialect/Dataflow/Analysis/QoREstimation.cpp
+  mlir/lib/Dialect/Dataflow/IR/Dataflow.cpp
+  mlir/lib/Dialect/Dataflow/Transforms/LowerCopyToAffine.cpp
+  mlir/lib/Dialect/Dataflow/Transforms/LowerSubviewToAffine.cpp
+  mlir/lib/Dialect/Dataflow/Transforms/RemoveLoopsOfUnitIter.cpp
+
+The HLS C++ emitters, visitor and support utilities listed under HeteroCL below
+descend from ScaleHLS's emitter as well; their notices say "Modification: ScaleHLS".
+
+ScaleHLS-HIDA (https://github.com/UIUC-ChenLab/ScaleHLS-HIDA) is developed from the
+same code base under the same license. A line-level comparison against the full
+histories of both repositories found no code specific to HIDA in ST-Flow.
+
+------------------------------------------------------------------------------
+HeteroCL
+Copyright HeteroCL authors
+Licensed under the Apache License, Version 2.0
+https://github.com/cornell-zhang/heterocl
+
+Parts of the MLIR translation and support layer derive from HeteroCL's HLS code
+emission (itself a modification of ScaleHLS's), notably the operation visitor and the
+C++ emitter structure:
+
+  mlir/include/streamhls/Dialect/Dataflow/Support/Utils.h
+  mlir/include/streamhls/Dialect/Dataflow/Translation/EmitHLS.h
+  mlir/include/streamhls/Dialect/Dataflow/Translation/EmitTAPA.h
+  mlir/include/streamhls/Dialect/Dataflow/Translation/EmitVivadoHLS.h
+  mlir/include/streamhls/Dialect/Dataflow/Translation/Utils.h
+  mlir/include/streamhls/Dialect/Dataflow/Translation/Visitor.h
+  mlir/lib/Dialect/Dataflow/Support/CMakeLists.txt
+  mlir/lib/Dialect/Dataflow/Support/Utils.cpp
+  mlir/lib/Dialect/Dataflow/Translation/EmitHLS.cpp
+  mlir/lib/Dialect/Dataflow/Translation/EmitTAPA.cpp
+  mlir/lib/Dialect/Dataflow/Translation/EmitVivadoHLS.cpp
+  mlir/lib/Dialect/Dataflow/Translation/Utils.cpp
+
+------------------------------------------------------------------------------
+Allo
+Copyright Allo authors
+Licensed under the Apache License, Version 2.0
+https://github.com/cornell-zhang/allo
+
+The Python binding structure and its CMake wiring derive from Allo's MLIR Python
+bindings:
+
+  mlir/include/streamhls/Dialect/CMakeLists.txt
+  mlir/include/streamhls/Dialect/Dataflow/Bindings/CMakeLists.txt
+  mlir/lib/Dialect/Dataflow/Bindings/StreamHLSModule.cpp
+  mlir/lib/Dialect/Dataflow/CAPI/Translation/CMakeLists.txt
+
+------------------------------------------------------------------------------
+Stream-HLS
+Copyright Stream-HLS authors
+Licensed under the MIT License (licenses/Stream-HLS.txt)
+https://github.com/UCLA-VAST/Stream-HLS
+
+ST-Flow generalizes Stream-HLS (FPGA '25): its MLIR dialect, system modeling,
+edge conversion and HLS emission passes extend those of Stream-HLS, and the
+internal `streamhls` namespace and directory names are inherited from it. The
+exception types carry its per-file notice:
+
+  mlir/include/streamhls/Dialect/Dataflow/Bindings/streamhls/exceptions.py
+
+------------------------------------------------------------------------------
+Xilinx Runtime (XRT) headers and library
+Copyright (C) 2016-2022 Xilinx, Inc.
+Copyright (C) 2022 Advanced Micro Devices, Inc.
+Licensed under the Apache License, Version 2.0
+https://github.com/Xilinx/XRT
+
+The 86 header files under extern/xrt/include/ and the prebuilt shared library
+extern/xrt/lib/libxrt_coreutil.so.2.14.418 (with its two symlinks) are vendored,
+unmodified, from XRT to build the host-side runtime interface. They are third-party
+code, not ST-Flow source.
+
+One of them, extern/xrt/include/xcl_hwctx.h, is dual-licensed and carries both
+"SPDX-License-Identifier: Apache-2.0" and "SPDX-License-Identifier: GPL-2.0"
+because its types are shared with the Linux kernel driver. It is used here under
+the Apache-2.0 option. No GPL-licensed code is incorporated into ST-Flow.

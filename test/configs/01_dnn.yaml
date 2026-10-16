@@ -1,0 +1,21 @@
+
+enable_unrolling: True
+enable_permutation: True
+
+atol: 0.001
+
+swmr_elimination: conservative
+
+dse_options:
+
+  balanced_mapping_similarity_threshold: 1.1
+  balanced_mapping_ub_threshold: 1.1
+  
+  latency_memory_ratio: 80
+
+  min_time_loop_size: 8
+
+  objective_scaling_factor: 10
+
+  unrolling_ampl_solver: "ilogcp"
+

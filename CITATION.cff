@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+message: "If you use ST-Flow, please cite the PACT '26 paper below."
+title: "ST-Flow: A Hardware Compiler for Automating Spatial-Temporal Dataflow Acceleration"
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/UCLA-VAST/ST-Flow"
+url: "https://st-flow.readthedocs.io"
+version: "PACT26"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21881993
+    description: "Archived PACT '26 artifact (source, experiments, toolchain)"
+authors:
+  - family-names: Basalama
+    given-names: Suhail
+  - family-names: Pouget
+    given-names: Stéphane
+  - family-names: Cong
+    given-names: Jason
+preferred-citation:
+  type: conference-paper
+  title: "ST-Flow: A Hardware Compiler for Automating Spatial-Temporal Dataflow Acceleration"
+  doi: 10.1145/3838684.3846865
+  authors:
+    - family-names: Basalama
+      given-names: Suhail
+    - family-names: Pouget
+      given-names: Stéphane
+    - family-names: Cong
+      given-names: Jason
+  collection-title: "Proceedings of the International Conference on Parallel Architectures and Compilation Techniques (PACT '26)"
+  publisher:
+    name: "Association for Computing Machinery"
+  conference:
+    name: "PACT '26"
+    city: "Chicago, IL"
+    country: US
+  month: 10
+  year: 2026

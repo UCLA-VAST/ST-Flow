@@ -1,0 +1,685 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import argparse
+import glob
+import fnmatch
+from rich.console import Console
+from rich.table import Table
+import sys
+
+MODE_RESOURCES = {
+    "csim":      {"cpus": 1, "mem": "4G",  "q": "low", "exclude": "c03,c04"}, # c03,c04 don't have xrt
+    "csim_only": {"cpus": 1, "mem": "2G",  "q": "low", "exclude": "c03,c04"}, # c03,c04 don't have xrt
+    "syn":       {"cpus": 1, "mem": "16G", "q": "low", "exclude": ""},
+    "cosim":     {"cpus": 1, "mem": "32G", "q": "low", "exclude": "c03,c04,c05"},
+    "gen_bit":   {"cpus": 4, "mem": "64G", "q": "low", "exclude": "c03,c04"},
+    "run_bit":   {"cpus": 1, "mem": "8G",  "q": "low", "exclude": "", "gpus": "u55c:1"},
+}
+VITIS_VERSION = "2024.2"
+
+# Project root is one level up from scripts/
+root = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.join(root, "scripts", "utils"))
+from report_utils import get_full_project_report
+import time
+
+console = Console()
+
+def run_command(cmd, cwd=None, capture=False):
+    if not capture:
+        console.print(f"[bold blue]Running:[/bold blue] {cmd} in {cwd}")
+    return subprocess.run(cmd, shell=True, cwd=cwd, capture_output=capture, text=True)
+
+def matches_filter(name, pattern_str):
+    """Checks if name matches any of the comma-separated patterns."""
+    patterns = pattern_str.split(',')
+    return any(fnmatch.fnmatch(name, p.strip()) for p in patterns)
+
+def get_job_status():
+    """Returns a list of current Slurm jobs for the user: [{'id': id, 'name': name, 'status': status, 'time': time}]."""
+    # Use | as delimiter for robust parsing
+    res = run_command("squeue --me --format='%i|%200j|%T|%M'", capture=True)
+    lines = res.stdout.strip().split('\n')[1:]
+    jobs = []
+    for line in lines:
+        parts = line.split('|')
+        if len(parts) >= 4:
+            jobs.append({
+                'id': parts[0].strip(),
+                'name': parts[1].strip(),
+                'status': parts[2].strip(),
+                'time': parts[3].strip()
+            })
+    return jobs
+
+def get_test_ids(bench_path):
+    """
+    Returns a list of test IDs for the benchmark, using a cache if available and up-to-date.
+    """
+    cache_path = os.path.join(bench_path, ".tests_cache")
+    
+    # 1. Get current state of test files
+    test_files = glob.glob(os.path.join(bench_path, "test_*.py"))
+    if not test_files:
+        return []
+    
+    # Get max mtime of test files and the directory itself (for additions/removals)
+    try:
+        max_mtime = os.path.getmtime(bench_path)
+        for f in test_files:
+            max_mtime = max(max_mtime, os.path.getmtime(f))
+    except OSError:
+        max_mtime = 0
+        
+    # 2. Check cache validity
+    if os.path.exists(cache_path):
+        cache_mtime = os.path.getmtime(cache_path)
+        if cache_mtime >= max_mtime:
+            try:
+                with open(cache_path, 'r') as f:
+                    return [line.strip() for line in f if line.strip()]
+            except Exception:
+                pass # Fallback to discovery
+            
+    # 3. Perform discovery
+    console.print(f"  [grey50]Refreshing test cache for {os.path.basename(bench_path)}...[/grey50]")
+    res = run_command("pytest --collect-only -q -c /dev/null", cwd=bench_path, capture=True)
+    test_ids = [line.strip() for line in res.stdout.split('\n') if '::' in line]
+    
+    if not test_ids:
+        return []
+
+    # 4. Save to cache
+    try:
+        with open(cache_path, 'w') as f:
+            for tid in test_ids:
+                f.write(tid + '\n')
+    except Exception as e:
+        console.print(f"  [yellow]Warning: Could not write cache to {cache_path}: {e}[/yellow]")
+        
+    return test_ids
+
+def find_project_dir(bench_path, test_id, existing_prj_dirs):
+    """Finds the project directory corresponding to a test ID."""
+    try:
+        test_file, test_case = test_id.split('::')
+        test_file_base = test_file.replace('test_', '').replace('.py', '')
+        test_case_clean = test_case.replace('[', '_').replace(']', '').replace('test_', '')
+        job_suffix = test_case_clean
+    except Exception:
+        test_file_base = ""
+        job_suffix = test_id.replace('::', '_').replace('[', '_').replace(']', '').replace('.py', '').replace('test_', '')
+    
+    match_parts = set([p for p in test_file_base.split('_') if p] + [p for p in job_suffix.split('_') if p])
+    for prj_name_candidate in existing_prj_dirs:
+        candidate_parts = set(prj_name_candidate.replace('.prj', '').split('_'))
+        if match_parts.issubset(candidate_parts):
+            return os.path.join(bench_path, prj_name_candidate), job_suffix
+    return None, job_suffix
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluation Runner Utility")
+    parser.add_argument("action", choices=["submit", "status", "cancel", "report", "gpt2_dse"], help="Action to perform")
+    parser.add_argument("-m", "--mode", choices=["csim", "csim_only", "syn", "cosim", "gen_bit", "run_bit"], default=None, help="Mode for submission")
+    parser.add_argument("-s", "--filter", type=str, default="*", help="Filter strategy folders (e.g. '*sa*')")
+    parser.add_argument("-b", "--bench", type=str, default="*", help="Filter benchmarks (e.g. '01_dnn')")
+    parser.add_argument("-t", "--test", type=str, default="*", help="Filter individual tests (e.g. '*3mm*')")
+    parser.add_argument("-v", "--detailed", action="store_true", help="Show project-level status")
+    parser.add_argument("-o", "--output", "--out", type=str, default=None, help="Output CSV filename for 'report' action")
+    parser.add_argument("-f", "--failures", nargs='?', const='all', 
+                        choices=["all", "DSE", "csim", "syn", "cosim", "bitstream", "latency", "dsp"], 
+                        help="Only show failed cases. Optionally specify mode (DSE, csim, syn, etc.)")
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    parser.add_argument("-p", "--priority", action="store_true", help="Run with high priority (-A suhailb) instead of -q low")
+    parser.add_argument("--pending", action="store_true", help="Only cancel pending jobs")
+    parser.add_argument("--force", action="store_true", help="Force submission even if the step has already passed")
+    parser.add_argument("-i", "--eval-dir", type=str, default="evaluation", help="Evaluation directory (default: 'evaluation' in project root)")
+    parser.add_argument("-l", "--logs", action="store_true", help="Show log paths in detailed status view")
+    parser.add_argument("-x", "--exclude", type=str, default=None, help="Exclude tests matching these patterns (comma-separated)")
+    parser.add_argument("--p-cycles", action="store_true", help="Show p_cycles column and sort by p_latency")
+    args = parser.parse_args()
+
+    # Resolve evaluation directory
+    if os.path.isabs(args.eval_dir):
+        eval_dir = args.eval_dir
+    elif args.eval_dir.startswith("./") or args.eval_dir.startswith("../") or os.path.exists(args.eval_dir):
+        eval_dir = os.path.abspath(args.eval_dir)
+    else:
+        eval_dir = os.path.join(root, args.eval_dir)
+    
+    if args.action == "submit":
+        if args.mode is None:
+            args.mode = "csim"
+
+        active_jobs = get_job_status()
+        active_job_names = set(j['name'] for j in active_jobs)
+        res_cfg = MODE_RESOURCES[args.mode]
+
+        for strategy in sorted(os.listdir(eval_dir)):
+            if not os.path.isdir(os.path.join(eval_dir, strategy)): continue
+            if not matches_filter(strategy, args.filter): continue
+            
+            for bench in sorted(os.listdir(os.path.join(eval_dir, strategy))):
+                if not matches_filter(bench, args.bench): continue
+                bench_path = os.path.join(eval_dir, strategy, bench)
+                if not os.path.isdir(bench_path): continue
+
+                # Get all individual test projects in this benchmark
+                test_ids = get_test_ids(bench_path)
+                
+                if not test_ids:
+                    console.print(f"  [yellow]Warning: No tests found in {bench_path}[/yellow]")
+                    continue
+
+                # Pre-list existing projects in this benchmark to speed up matching
+                existing_prj_dirs = [d for d in os.listdir(bench_path) if d.endswith('.prj') and os.path.isdir(os.path.join(bench_path, d))]
+
+                console.print(f"\n[bold blue]>>> Strategy: {strategy}, Benchmark: {bench} ({len(test_ids)} projects)[/bold blue]")
+
+                for test_id in test_ids:
+                    prj_dir, job_suffix = find_project_dir(bench_path, test_id, existing_prj_dirs)
+                    prj_name_clean = os.path.basename(prj_dir).replace(".prj", "") if prj_dir else ""
+                    if not (matches_filter(test_id, args.test) or (prj_dir and matches_filter(prj_name_clean, f"*{args.test.strip('*')}*"))):
+                        continue
+                    
+                    job_name = f"{strategy}_{bench}_{job_suffix}_{args.mode}"
+                    
+                    if job_name in active_job_names:
+                        status = next((j['status'] for j in active_jobs if j['name'] == job_name), "Active")
+                        console.print(f"  [yellow]Skipping {job_name}: Already {status}[/yellow]")
+                        continue
+
+                    # --- Incremental Build Logic ---
+                    skip_reason = None
+                    target_mode = args.mode
+                    
+                    if prj_dir and not args.force:
+                        rep = get_full_project_report(prj_dir)
+                        
+                        if args.mode == "csim":
+                            # Skip if BOTH DSE and CSIM were successful, CSIM may succeed even if DSE fails
+                            if rep.get('csim_success') and rep.get('dse_success'):
+                                skip_reason = "Already passed CSIM and DSE"
+                            elif rep.get('dse_success'):
+                                target_mode = "csim_only"
+                                console.print(f"  [cyan]Project {os.path.basename(prj_dir)}: DSE passed but CSIM missing/failed. Falling back to csim_only.[/cyan]")
+                        
+                        elif args.mode == "csim_only":
+                            if rep.get('csim_success'):
+                                skip_reason = "Already passed CSIM"
+                        
+                        elif args.mode == "syn":
+                            if rep.get('v_status') == 'Pass':
+                                skip_reason = "Already passed Synthesis"
+                        
+                        elif args.mode == "cosim":
+                            if rep.get('v_cosim_status') == 'Pass':
+                                skip_reason = "Already passed Co-simulation"
+                                
+                        elif args.mode == "gen_bit":
+                            if glob.glob(os.path.join(prj_dir, "build", "*.xclbin")):
+                                skip_reason = "Bitstream already exists"
+                            elif rep.get('b_status') == 'routed':
+                                skip_reason = "Failed after Routing"
+                            elif rep.get('b_status') == 'placed':
+                                skip_reason = "Failed after Placedment"
+                                
+                        elif args.mode == "run_bit":
+                            if rep.get('b_status') == 'Pass':
+                                skip_reason = "Already passed hardware execution"
+
+                    if skip_reason:
+                        console.print(f"  [green]Skipping {job_name}: {skip_reason}[/green]")
+                        continue
+                    # -------------------------------
+
+                    # Resources from configuration
+                    cpus = res_cfg["cpus"]
+                    mem = res_cfg["mem"]
+                    
+                    # Build sbatch command
+                    if args.mode in ["gen_bit", "run_bit"] and not prj_dir:
+                        console.print(f"  [red]Skipping {job_name}: Project directory not found. Please run 'syn' first.[/red]")
+                        continue
+
+                    if args.mode == "gen_bit":
+                        # For bitstream generation, we use a scratch-copy approach
+                        priority_line = f"#SBATCH -A suhailb" if args.priority else f"#SBATCH -q {res_cfg['q']}"
+                        exclude_line = f"#SBATCH --exclude={res_cfg['exclude']}" if res_cfg.get('exclude') else ""
+                        sbatch_script = f"""#!/bin/bash
+#SBATCH -J {job_name}
+#SBATCH -c {cpus}
+#SBATCH --mem={mem}
+#SBATCH -o %j.log
+#SBATCH -p batch
+{priority_line}
+{exclude_line}
+
+ORIGINAL_DIR=$(pwd)
+USER_NAME=$(whoami)
+SCRATCH_DIR="/scratch/${{USER_NAME}}/${{SLURM_JOB_ID}}"
+
+echo "Job ${{SLURM_JOB_ID}} started on $(hostname)"
+mkdir -p "${{SCRATCH_DIR}}"
+cp -r ./* "${{SCRATCH_DIR}}/"
+cd "${{SCRATCH_DIR}}"
+
+ml load xilinx/vivado/{VITIS_VERSION}
+source /opt/ampl/tools/ampl_activate.sh
+
+echo "Running synthesis and bitstream generation..."
+make bitstream -j{cpus} || echo "Bitstream generation failed"
+
+echo "Copying results back..."
+mkdir -p "${{ORIGINAL_DIR}}/build"
+rsync -am --include='*.xclbin' --include='*.xclbin.info' --include='*.ltx' --include='*.rpt' --include='*.log' --include='*.pb' --include='*.pb3' --include='*.json' --include='*/' --exclude='*' build/ "${{ORIGINAL_DIR}}/build/"
+
+rm -rf "${{SCRATCH_DIR}}"
+"""
+                        script_path = os.path.join(prj_dir, ".gen_bit.sbatch")
+                        with open(script_path, "w") as f:
+                            f.write(sbatch_script)
+                        run_command(f"sbatch {os.path.basename(script_path)}", cwd=prj_dir)
+                    else:
+                        vitis_env = f"ml load xilinx/vivado/{VITIS_VERSION} && source /opt/ampl/tools/ampl_activate.sh"
+                        # For run_bit, use STFLOW_MODE=bitstream
+                        target_mode = "bitstream" if args.mode == "run_bit" else target_mode
+                        
+                        pytest_cmd = f"pytest {test_id} -n1"
+                        
+                        # If target_mode was changed (e.g. fallback to csim_only), update job name
+                        # For run_bit, we want to keep the job name consistent
+                        if target_mode != args.mode and args.mode != "run_bit":
+                            job_name = f"{strategy}_{bench}_{job_suffix}_{target_mode}"
+                        
+                        # Special case for run_bit job name consistency
+                        if args.mode == "run_bit":
+                            job_name = f"{strategy}_{bench}_{job_suffix}_run_bit"
+
+                        sbatch_opts = [
+                            f"--job-name={job_name}",
+                            f"--output={job_name}_%j.log",
+                            f"--cpus-per-task={cpus}",
+                            f"--mem={mem}",
+                            "-p batch",
+                        ]
+                        if "gpus" in res_cfg:
+                            sbatch_opts.append(f"--gpus={res_cfg['gpus']}")
+                        if args.priority:
+                            sbatch_opts.append("-A suhailb")
+                        else:
+                            sbatch_opts.append(f"-q {res_cfg['q']}")
+                        
+                        if res_cfg.get('exclude'):
+                            sbatch_opts.append(f"--exclude={res_cfg['exclude']}")
+                        
+                        sbatch_opts.extend([
+                            "--requeue",
+                            f"--export=ALL,STFLOW_MODE={target_mode}"
+                        ])
+                        
+                        cmd = f"sbatch {' '.join(sbatch_opts)} --wrap '{vitis_env} && {pytest_cmd}'"
+                        run_command(cmd, cwd=bench_path)
+
+    elif args.action == "cancel":
+        jobs = get_job_status()
+        to_cancel = []
+        
+        # Pre-filter strategies to speed up matching
+        strategies = [s for s in os.listdir(eval_dir) if os.path.isdir(os.path.join(eval_dir, s)) and matches_filter(s, args.filter)]
+        
+        for job in jobs:
+            job_name = job['name']
+            jid = job['id']
+            status = job['status']
+            
+            # Match jobs belonging to selected mode/filter/bench
+            if args.mode and not job_name.endswith(f"_{args.mode}"): continue
+            
+            # This is a bit loose but works for project-level job names
+            matches_strategy = any(fnmatch.fnmatch(job_name, f"*{s}*") for s in strategies)
+            if not matches_strategy: continue
+            
+            if args.test != "*" and not matches_filter(job_name, f"*{args.test.strip('*')}*"):
+                continue
+
+            if args.pending and status != "PENDING":
+                continue
+            to_cancel.append((jid, job_name, status))
+        
+        if not to_cancel:
+            console.print("[yellow]No matching jobs found to cancel.[/yellow]")
+            return
+
+        msg = f"Found {len(to_cancel)} matching {'PENDING ' if args.pending else ''}jobs:"
+        console.print(f"[bold red]{msg}[/bold red]")
+        for jid, name, status in to_cancel[:10]:
+            console.print(f"  - {jid}: {name} ({status})")
+        if len(to_cancel) > 10:
+            console.print(f"  ... and {len(to_cancel)-10} more.")
+            
+        if not args.yes:
+            confirm = input(f"\nAre you sure you want to cancel these {len(to_cancel)} jobs? (y/N): ")
+            if confirm.lower() != 'y':
+                console.print("[yellow]Aborted.[/yellow]")
+                return
+
+        for jid, name, status in to_cancel:
+            console.print(f"[red]Canceling {jid} ({name})...[/red]")
+            run_command(f"scancel {jid}")
+        console.print(f"\n[bold red]Canceled {len(to_cancel)} jobs.[/bold red]")
+
+    elif args.action == "report":
+        console.print("[bold blue]Generating evaluation report...[/bold blue]")
+        cmd = f"python3 {os.path.join(root, 'scripts', 'utils', 'collect_results.py')} -i {eval_dir}"
+        if args.detailed:
+            cmd += " --detailed"
+        if args.output:
+            cmd += f" -o {args.output}"
+        if args.exclude:
+            cmd += f" --exclude \"{args.exclude}\""
+        run_command(cmd)
+
+    elif args.action == "gpt2_dse":
+        console.print("[bold blue]Collecting GPT2 DSE traces...[/bold blue]")
+        cmd = f"python3 {os.path.join(root, 'scripts', 'utils', 'collect_gpt2_traces.py')} -i {eval_dir}"
+        if args.output:
+            cmd += f" -o {args.output}"
+        run_command(cmd)
+
+    elif args.action == "status":
+        jobs = get_job_status()
+        active_jobs_map = {j['name']: j['status'] for j in jobs}
+
+        def is_failed(res, mode=None):
+            # If 'all' or None, any major failure counts
+            if mode is None or mode == 'all':
+                return (not res.get('dse_success')) or \
+                       (not res.get('csim_success')) or \
+                       (res.get('v_status') != 'Pass')
+            
+            if mode == "DSE": return not res.get('dse_success')
+            if mode == "csim": return not res.get('csim_success')
+            if mode == "syn": return res.get('v_status') != 'Pass'
+            if mode == "cosim": return res.get('v_cosim_status') != 'Pass'
+            if mode == "bitstream": return res.get('b_status') != 'Pass'
+            if mode == "latency":
+                err = res.get('cycle_err_rtl')
+                return err is not None and abs(err) > 5
+            if mode == "dsp":
+                err = res.get('dsp_err_vitis')
+                return err is not None and abs(err) > 5
+            return False
+
+        if not args.detailed:
+            table = Table(title="Evaluation Status Summary")
+            table.add_column("Strategy", style="cyan", no_wrap=True)
+            table.add_column("Benchmark", style="magenta", no_wrap=True)
+            table.add_column("Active Job", style="yellow")
+            table.add_column("DSE Pass", justify="center")
+            table.add_column("CSIM Pass", justify="center")
+            table.add_column("Syn Pass", justify="center")
+            table.add_column("Cosim Pass", justify="center")
+            table.add_column("BitGen", justify="center")
+            table.add_column("BitRun", justify="center")
+
+            for strategy in sorted(os.listdir(eval_dir)):
+                if not os.path.isdir(os.path.join(eval_dir, strategy)): continue
+                if not matches_filter(strategy, args.filter): continue
+                
+                for bench in sorted(os.listdir(os.path.join(eval_dir, strategy))):
+                    if not matches_filter(bench, args.bench): continue
+                    bench_path = os.path.join(eval_dir, strategy, bench)
+                    if not os.path.isdir(bench_path): continue
+                    
+                    # Check for active jobs related to this benchmark (any mode)
+                    running_count = 0
+                    pending_count = 0
+                    for job in jobs:
+                        # Count any job that belongs to this strategy and benchmark
+                        if job['name'].startswith(f"{strategy}_{bench}_"):
+                            status = job['status']
+                            if status == "RUNNING":
+                                running_count += 1
+                            else:
+                                pending_count += 1
+                    
+                    if running_count > 0 or pending_count > 0:
+                        job_found = f"[yellow]{running_count}[/yellow] | [yellow]{pending_count}[/yellow]"
+                    else:
+                        job_found = "-"
+                    
+                    # Collect project stats
+                    prjs = glob.glob(os.path.join(bench_path, "*.prj"))
+                    # Filter projects by test filter
+                    if args.test != "*":
+                        prjs = [p for p in prjs if matches_filter(os.path.basename(p), f"*{args.test.strip('*')}*")]
+                    
+                    total = len(prjs)
+                    if total == 0 and args.test != "*": continue
+                    
+                    # If filtering for failures, only show if there are actual failures
+                    if args.failures:
+                        has_fail = False
+                        for prj in prjs:
+                            if is_failed(get_full_project_report(prj), args.failures):
+                                has_fail = True
+                                break
+                        if not has_fail: continue
+
+                    dse_pass = 0
+                    csim_pass = 0
+                    syn_pass = 0
+                    cosim_pass = 0
+                    bitgen_pass = 0
+                    bitrun_pass = 0
+                    dse_run = 0
+                    csim_run = 0
+                    syn_run = 0
+                    cosim_run = 0
+                    bitgen_run = 0 # Not strictly tracked but added for consistency
+                    bitrun_run = 0
+
+                    for prj in prjs:
+                        res = get_full_project_report(prj)
+                        # Check if stage has even been attempted
+                        has_dse = os.path.exists(os.path.join(prj, "reports", "stflow.csv"))
+                        has_syn = res.get('v_status') != 'N/A'
+                        has_cosim = res.get('v_cosim_status') != 'N/A'
+
+                        if has_dse:
+                            dse_run += 1
+                            if res.get('dse_success'): dse_pass += 1
+                            if res.get('csim_success') is not None:
+                                csim_run += 1
+                                if res.get('csim_success'): csim_pass += 1
+                        
+                        if has_syn:
+                            syn_run += 1
+                            if res.get('v_status') == 'Pass': syn_pass += 1
+                        
+                        if has_cosim:
+                            cosim_run += 1
+                            if res.get('v_cosim_status') == 'Pass': cosim_pass += 1
+                        
+                        if res.get('bitgen_success'):
+                            bitgen_pass += 1
+                        
+                        if res.get('bitrun_success'):
+                            bitrun_pass += 1
+                    
+                    def fmt_summary(pass_count, total_count, run_count):
+                        if total_count == 0 or run_count == 0: return "[grey50]-[/grey50]"
+                        if pass_count == total_count: return "[green]\u2714[/green]"
+                        if pass_count == 0: return "[red]\u2718[/red]"
+                        return f"[orange1]{pass_count}/{total_count}[/orange1]"
+                    
+                    table.add_row(
+                        strategy, 
+                        bench, 
+                        job_found, 
+                        fmt_summary(dse_pass, total, dse_run),
+                        fmt_summary(csim_pass, total, csim_run),
+                        fmt_summary(syn_pass, total, syn_run),
+                        fmt_summary(cosim_pass, total, cosim_run),
+                        fmt_summary(bitgen_pass, total, total),
+                        fmt_summary(bitrun_pass, total, total)
+                    )
+            console.print(table)
+        else:
+            # Detailed project-level status
+            all_rows = []
+            for strategy in sorted(os.listdir(eval_dir)):
+                if not os.path.isdir(os.path.join(eval_dir, strategy)): continue
+                if not matches_filter(strategy, args.filter): continue
+                
+                for bench in sorted(os.listdir(os.path.join(eval_dir, strategy))):
+                    if not matches_filter(bench, args.bench): continue
+                    bench_path = os.path.join(eval_dir, strategy, bench)
+                    bench_jobs = [j for j in jobs if j['name'].startswith(f"{strategy}_{bench}_")]
+                    
+                    for prj in sorted(glob.glob(os.path.join(bench_path, "*.prj"))):
+                        prj_name_clean = os.path.basename(prj).replace(".prj", "")
+                        if not matches_filter(prj_name_clean, f"*{args.test.strip('*')}*"):
+                            continue
+                            
+                        res = get_full_project_report(prj)
+                        if args.failures and not is_failed(res, args.failures):
+                            continue
+                        
+                        all_rows.append({
+                            'strategy': strategy,
+                            'bench': bench,
+                            'prj_name_clean': prj_name_clean,
+                            'res': res,
+                            'bench_jobs': bench_jobs,
+                            'prj': prj
+                        })
+
+            if args.p_cycles:
+                # Sort by p_cycles (latency) from lowest to highest
+                all_rows.sort(key=lambda x: x['res'].get('p_cycles', float('inf')) if x['res'].get('p_cycles', -1) > 0 else float('inf'))
+
+            table = Table(title="Detailed Project Status")
+            table.add_column("Strategy", style="cyan", no_wrap=True)
+            if args.p_cycles:
+                table.add_column("Benchmark", style="blue", no_wrap=True)
+            table.add_column("Project", style="magenta", no_wrap=True)
+            
+            if args.p_cycles:
+                table.add_column("P Cycles", justify="right", style="green")
+                table.add_column("DSE", justify="center")
+                table.add_column("CSIM", justify="center")
+                table.add_column("BitGen", justify="center")
+                table.add_column("BitRun", justify="center")
+            else:
+                table.add_column("DSE", justify="center")
+                table.add_column("CSIM", justify="center")
+                table.add_column("HLS", justify="center")
+                table.add_column("RTL", justify="center")
+                table.add_column("BitGen", justify="center")
+                table.add_column("BitRun", justify="center")
+                table.add_column("Cycle Err (%)", justify="right")
+                table.add_column("DSP Err (%)", justify="right")
+
+            def fmt_status(s, mode, prj_parts, bench_jobs, strategy, bench):
+                # mode might match multiple slurm suffixes (e.g. csim matches csim and csim_only)
+                for job in bench_jobs:
+                    job_name = job['name']
+                    if job_name.endswith(f"_{mode}") or (mode == "csim" and job_name.endswith("_csim_only")):
+                        # Extract job suffix part
+                        prefix = f"{strategy}_{bench}_"
+                        # Find suffix length
+                        s_len = len(mode) + 1
+                        if mode == "csim" and job_name.endswith("_csim_only"):
+                            s_len = len("csim_only") + 1
+                        
+                        job_suffix = job_name[len(prefix):-s_len]
+                        job_suffix_parts = set(p for p in job_suffix.split('_') if p)
+                        
+                        if job_suffix_parts.issubset(prj_parts):
+                            if job['status'] == "RUNNING":
+                                return "[bold yellow]R[/bold yellow]"
+                            else:
+                                return "[yellow]P[/yellow]"
+                                
+                if s == 'Pass': return "[green]\u2714[/green]"
+                if s in ['N/A', 'none', '-']: return "[grey50]-[/grey50]"
+                if s in ['synth', 'placed', 'routed', 'bitstream']:
+                    # checkmark
+                    if s == 'bitstream': return "[green]\u2714[/green]"
+                    else: return f"[red]{s}[/red]"
+                return "[red]\u2718[/red]"
+
+            for row_data in all_rows:
+                strategy = row_data['strategy']
+                bench = row_data['bench']
+                prj_name_clean = row_data['prj_name_clean']
+                res = row_data['res']
+                bench_jobs = row_data['bench_jobs']
+                prj = row_data['prj']
+                
+                prj_parts = set(p for p in prj_name_clean.split('_') if p)
+
+                dse_stat = "Pass" if res.get('dse_success') else ("Fail" if os.path.exists(os.path.join(prj, "reports", "stflow.csv")) else "N/A")
+                csim_stat = "Pass" if res.get('csim_success') else ("Fail" if res.get('csim_success') is not None else "N/A")
+
+                # Cycle Error Formatting
+                c_err_val = res.get('cycle_err_rtl')
+                c_err_str = f"{c_err_val}%" if c_err_val is not None else "-"
+                
+                # DSP Error Formatting
+                d_err_val = res.get('dsp_err_vitis')
+                d_diff_val = res.get('dsp_diff_vitis')
+                if d_err_val is not None:
+                    if abs(d_err_val) < 5:
+                        d_err_str = "[green]\u2714[/green]"
+                    else:
+                        d_err_str = f"[red]\u2718 {d_err_val}% ({d_diff_val})[/red]"
+                else:
+                    d_err_str = "-"
+                
+                log_file_abs = os.path.abspath(os.path.join(prj, "stflow.log"))
+                log_file_rel = os.path.relpath(log_file_abs, root)
+                
+                if args.logs or args.failures:
+                    prj_display = f"{prj_name_clean}\n[grey50]./{log_file_rel}:1[/grey50]"
+                else:
+                    prj_display = prj_name_clean
+                
+                row_items = [
+                    strategy,
+                ]
+                if args.p_cycles:
+                    row_items.append(bench)
+                
+                row_items.append(prj_display)
+                
+                if args.p_cycles:
+                    p_cycles_val = res.get('p_cycles', -1)
+                    p_cycles_str = f"{p_cycles_val:,}" if p_cycles_val > 0 else "-"
+                    row_items.append(p_cycles_str)
+                    
+                    row_items.extend([
+                        fmt_status(dse_stat, "csim", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status(csim_stat, "csim", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status("Pass" if res.get('bitgen_success') else res.get('b_status', 'N/A'), "gen_bit", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status("Pass" if res.get('bitrun_success') else res.get('b_status', 'N/A'), "run_bit", prj_parts, bench_jobs, strategy, bench),
+                    ])
+                else:
+                    row_items.extend([
+                        fmt_status(dse_stat, "csim", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status(csim_stat, "csim", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status(res['v_status'], "syn", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status("Pass" if res['rtl_cycles'] > 0 else "N/A", "cosim", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status("Pass" if res.get('bitgen_success') else res.get('b_status', 'N/A'), "gen_bit", prj_parts, bench_jobs, strategy, bench),
+                        fmt_status("Pass" if res.get('bitrun_success') else res.get('b_status', 'N/A'), "run_bit", prj_parts, bench_jobs, strategy, bench),
+                        c_err_str,
+                        d_err_str
+                    ])
+                table.add_row(*row_items)
+            console.print(table, soft_wrap=True)
+
+if __name__ == "__main__":
+    main()

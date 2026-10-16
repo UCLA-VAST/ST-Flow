@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+import os
+import sys
+import argparse
+import pandas as pd
+import fnmatch
+
+# Project root is one level up from scripts/
+root = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.join(root, "scripts"))
+
+def matches_filter(name, pattern_str):
+    """Checks if name matches any of the comma-separated patterns."""
+    if not pattern_str or pattern_str == "*":
+        return True
+    patterns = pattern_str.split(',')
+    return any(fnmatch.fnmatch(str(name), p.strip()) for p in patterns)
+
+def filter_df(df, args):
+    """Applies strategy, benchmark, and test filters to the dataframe."""
+    initial_len = len(df)
+    
+    if hasattr(args, 'strategy') and args.strategy != "*":
+        df = df[df['config'].apply(lambda x: matches_filter(x, args.strategy))]
+    
+    if hasattr(args, 'bench') and args.bench != "*":
+        df = df[df['benchmark'].apply(lambda x: matches_filter(x, args.bench))]
+        
+    if hasattr(args, 'test') and args.test != "*":
+        df = df[df['test'].apply(lambda x: matches_filter(x, args.test))]
+        
+    if len(df) == 0:
+        print(f"Warning: Filtering reduced dataset from {initial_len} to 0 rows. Check your filters.")
+    elif len(df) < initial_len:
+        print(f"Filtering: {initial_len} -> {len(df)} rows.")
+        
+    return df
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluation Plotting Utility")
+    
+    # Common arguments
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-c", "--cycles", help="Cycles column to use")
+    common.add_argument("-s", "--strategy", "--filter", default="*", help="Strategy pattern (glob, e.g. '*ga*')")
+    common.add_argument("-b", "--bench", "--benchmark", default="*", help="Benchmark pattern (glob, e.g. '05_mot')")
+    common.add_argument("-t", "--test", default="*", help="Test name pattern (glob)")
+    common.add_argument("--csv", default="all.csv", help="Path to input CSV")
+    common.add_argument("--codo", default="codo.csv", help="Path to Codo baseline CSV")
+    common.add_argument("--out", default=".", help="Output directory")
+    common.add_argument("-o", "--output", help="Override output filename (basename only)")
+    common.add_argument("--pdf", action="store_true", help="Save plots as PDF (default: PNG)")
+
+    subparsers = parser.add_subparsers(dest="action", help="Plotting action")
+
+    # Action: ndiv (previously bench)
+    ndiv_parser = subparsers.add_parser("ndiv", parents=[common], help="Plot Div vs Non-Div comparison")
+    ndiv_parser.add_argument("pos_benchmark", nargs='?', help="Benchmark name (positional, optional if -b is used)")
+    ndiv_parser.add_argument("-n", "--normalized", action="store_true", help="Plot speedup relative to Div-Min baseline")
+    ndiv_parser.add_argument("--log", action="store_true", help="Use log scale for y-axis")
+
+    # Action: ppa
+    ppa_parser = subparsers.add_parser("ppa", parents=[common], help="Plot PPA (Power-Performance-Area) analysis")
+    ppa_parser.add_argument("--bitstream", action="store_true", help="Use bitstream resources instead of Vitis estimates")
+    ppa_parser.add_argument("--log", action="store_true", help="Use log scale for y-axis")
+    
+    # Action: latency (Validation)
+    lat_parser = subparsers.add_parser("valid", parents=[common], help="Plot latency validation")
+
+    # Action: summary
+    sum_parser = subparsers.add_parser("summary", parents=[common], help="Plot multi-run summary")
+    
+    cmp_parser = subparsers.add_parser("codo_latency", parents=[common], help="Compare framework with Codo baseline latency")
+    cmp_parser.add_argument("-n", "--normalized", action="store_true", help="Plot speedup relative to (baseline / framework)")
+    cmp_parser.add_argument("--show-all", action="store_true", help="Show all hardware strategies instead of just the best")
+    cmp_parser.add_argument("--log", action="store_true", help="Use log scale for y-axis")
+
+    res_parser = subparsers.add_parser("codo_resources", parents=[common], help="Compare framework with Codo resources")
+    res_parser.add_argument("-n", "--normalized", action="store_true", help="Plot normalized ratio (framework / baseline)")
+    res_parser.add_argument("--show-all", action="store_true", help="Show all hardware strategies")
+    res_parser.add_argument("--log", action="store_true", help="Use log scale for y-axis")
+    res_parser.add_argument("-m", "--metrics", default="v_dsps,v_mem", help="Comma-separated metrics (e.g. v_dsps,v_mem,v_freq)")
+
+    full_parser = subparsers.add_parser("codo_full", parents=[common], help="Full 3-panel Codo comparison (Cycles, DSP, Mem)")
+    full_parser.add_argument("-n", "--normalized", action="store_true", help="Plot normalized ratios")
+    full_parser.add_argument("--show-all", action="store_true", help="Show all hardware strategies")
+    full_parser.add_argument("--log", action="store_true", help="Use log scale for y-axis")
+    full_parser.add_argument("--u_strategies", default="div_min,ndiv_min", help="Tiling strategies to compare (comma-separated)")
+
+    trade_parser = subparsers.add_parser("tradeoff", parents=[common], help="Plot Heuristic Efficiency (Speedup vs Savings)")
+    trade_parser.add_argument("pos_benchmark", nargs='?', help="Benchmark name")
+    trade_parser.add_argument("--res", default="v_dsps", help="Resource metric to evaluate (default: v_dsps)")
+
+    # Action: gpt2_dse
+    gpt2_parser = subparsers.add_parser("gpt2_dse", parents=[common], help="Plot GPT-2 DSE convergence")
+    gpt2_parser.add_argument("-i", "--input", default="gpt2_dse_traces.csv", help="Input traces CSV")
+
+    # Action: comp_dse
+    comp_parser = subparsers.add_parser("comp_dse", parents=[common], help="Compare search methods (SA, GA, Comb) normalized to MINLP")
+    comp_parser.add_argument("pos_benchmark", nargs='?', help="Benchmark name")
+    comp_parser.add_argument("-n", "--normalized", action="store_true", default=True, help="Plot normalized speedup (baseline / framework)")
+    comp_parser.add_argument("--log", action="store_true", help="Use log scale for y-axis")
+
+    args = parser.parse_args()
+
+    if not args.action:
+        parser.print_help()
+        return
+
+    # Resolve input file paths
+    # (No more fallbacks to study/data)
+    if os.path.isabs(args.csv) or args.csv.startswith("./") or args.csv.startswith("../"):
+        args.csv = os.path.abspath(args.csv)
+            
+    if os.path.isabs(args.codo) or args.codo.startswith("./") or args.codo.startswith("../"):
+        args.codo = os.path.abspath(args.codo)
+
+    # Handle defaults for cycles column if not provided
+    if args.cycles is None:
+        if args.action in ["summary", "comp_dse"]:
+            args.cycles = 'p_cycles'
+        else:
+            args.cycles = 'rtl_cycles'
+
+    # Check if CSV exists
+    if not os.path.exists(args.csv):
+        print(f"Error: Data file not found at {args.csv}")
+        return
+    # Load and Filter Data
+    df = pd.read_csv(args.csv)
+    df.columns = [c.strip() for c in df.columns]
+    
+    # Resolve output directory and format
+    ext = "pdf" if args.pdf else "png"
+    
+    if args.out and (os.path.isabs(args.out) or args.out.startswith("./") or args.out.startswith("../")):
+        args.out = os.path.abspath(args.out)
+    
+    if args.output and (os.path.isabs(args.output) or os.path.dirname(args.output)):
+        # If -o ends with a slash, it's a directory
+        if args.output.endswith(os.path.sep) or (os.path.exists(args.output) and os.path.isdir(args.output)):
+            args.out = args.output
+            args.output = None
+        else:
+            # If -o is a path to a file, split it
+            full_output_path = os.path.abspath(args.output)
+            args.out = os.path.dirname(full_output_path)
+            args.output = os.path.basename(full_output_path)
+            
+            # Check for extension in filename
+            name, ext_provided = os.path.splitext(args.output)
+            if ext_provided.lower() in [".pdf", ".png", ".svg"]:
+                args.output = name
+                ext = ext_provided[1:]
+    
+    # Override bench if positional is provided
+    if args.action == "ndiv" and args.pos_benchmark:
+        args.bench = args.pos_benchmark
+
+    df = filter_df(df, args)
+    
+    if df.empty:
+        return
+
+    # Call plotting scripts
+    if args.action == "ndiv":
+        from plot.plot_bench import plot as plot_ndiv
+        plot_ndiv(df, args.out, cycles_col=args.cycles, 
+                  normalized=args.normalized, log_scale=args.log, ext=ext, output_name=args.output)
+    
+    elif args.action == "valid":
+        from plot.latency_validation import plot as plot_latency
+        plot_latency(df, args.out, baseline=args.cycles or "rtl_cycles", ext=ext, output_name=args.output)
+    
+    elif args.action == "ppa":
+        from plot.plot_ppa import plot as plot_ppa
+        plot_ppa(df, args.out, use_bitstream=args.bitstream, log_scale=args.log, ext=ext, output_name=args.output)
+    
+    elif args.action == "summary":
+        from plot.plot_experiments_summary import plot as plot_summary
+        plot_summary(df, args.out, cycles_col=args.cycles, ext=ext, output_name=args.output)
+    
+    elif args.action == "codo_latency":
+        # Load Codo data separately as it shouldn't be filtered by framework config
+        if not os.path.exists(args.codo):
+            print(f"Error: Codo baseline file not found at {args.codo}")
+            return
+        df_codo = pd.read_csv(args.codo)
+        from plot.plot_codo_comparison import plot as plot_codo
+        plot_codo(df, df_codo, args.out, cycles_col=args.cycles, 
+                  normalized=args.normalized, show_all=args.show_all, log_scale=args.log, ext=ext, output_name=args.output)
+    
+    elif args.action == "codo_resources":
+        if not os.path.exists(args.codo):
+            print(f"Error: Codo baseline file not found at {args.codo}")
+            return
+        df_codo = pd.read_csv(args.codo)
+        from plot.plot_codo_resources import plot as plot_resources
+        metrics = args.metrics.split(',')
+        plot_resources(df, df_codo, args.out, metrics=metrics, 
+                       normalized=args.normalized, show_all=args.show_all, log_scale=args.log, ext=ext, output_name=args.output)
+    
+    elif args.action == "codo_full":
+        if not os.path.exists(args.codo):
+            print(f"Error: Codo baseline file not found at {args.codo}")
+            return
+        df_codo = pd.read_csv(args.codo)
+        from plot.plot_codo_full import plot as plot_full
+        u_strats = args.u_strategies.split(',') if hasattr(args, 'u_strategies') else ['div_min', 'ndiv_min']
+        plot_full(df, df_codo, args.out, u_strategies=u_strats,
+                  normalized=args.normalized, show_all=args.show_all, log_scale=args.log)
+    
+    elif args.action == "tradeoff":
+        if args.pos_benchmark:
+            args.bench = args.pos_benchmark
+        from plot.plot_bench_tradeoff import plot as plot_tradeoff
+        bench_to_plot = args.bench if args.bench != "*" else df['benchmark'].iloc[0]
+        plot_tradeoff(bench_to_plot, df, args.out, cycles_col=args.cycles, res_col=args.res, ext=ext, output_name=args.output)
+
+    elif args.action == "gpt2_dse":
+        # Resolve input path
+        input_path = args.input
+        if os.path.isabs(input_path) or input_path.startswith("./") or input_path.startswith("../"):
+            input_path = os.path.abspath(input_path)
+
+        # If --csv was explicitly provided, use it for gpt2_dse as well
+        if args.csv != "all.csv":
+            input_path = args.csv
+            
+        if os.path.isabs(input_path) or input_path.startswith("./") or input_path.startswith("../"):
+            input_path = os.path.abspath(input_path)
+
+        from plot.plot_gpt2_convergence import main as plot_gpt2
+        # Use -o with the correct extension
+        output_name = args.output if args.output else "gpt2_convergence"
+        output_path = os.path.join(args.out, output_name)
+        if not output_path.endswith(f".{ext}"):
+            output_path = f"{output_path}.{ext}"
+            
+        sys.argv = [sys.argv[0], "-i", input_path, "-o", output_path]
+        plot_gpt2()
+
+    elif args.action == "comp_dse":
+        if args.pos_benchmark:
+            args.bench = args.pos_benchmark
+        from plot.plot_comp_dse import plot as plot_comp
+        bench_to_plot = args.bench if args.bench != "*" else df['benchmark'].iloc[0]
+        plot_comp(bench_to_plot, df, args.out, cycles_col=args.cycles, log_scale=args.log, ext=ext, output_name=args.output)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,8 @@
+/* Hero block on the landing page. */
+.stflow-tagline {
+  font-size: 1.15rem;
+  line-height: 1.6;
+  color: var(--color-foreground-secondary);
+  margin-bottom: 1.5rem;
+}
+.sd-card-title { font-weight: 600; }

@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+import os
+import argparse
+import shutil
+import fnmatch
+import sys
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+
+def matches_filter(name, pattern_str):
+    """Checks if name matches any of the comma-separated patterns."""
+    if pattern_str == "*":
+        return True
+    patterns = pattern_str.split(',')
+    return any(fnmatch.fnmatch(name, p.strip()) for p in patterns)
+
+def main():
+    # Project root is one level up from scripts/
+    root = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    parser = argparse.ArgumentParser(description="Evaluation Backup Utility - Move specific projects, benchmarks, or strategy folders to a backup location.")
+    parser.add_argument("backup_path", type=str, help="Destination directory for the backup")
+    parser.add_argument("-i", "--eval-dir", type=str, default="evaluation", help="Evaluation directory (default: 'evaluation' in project root)")
+    parser.add_argument("-s", "--strategy", type=str, default="*", help="Filter strategy folders (e.g. '*sa*')")
+    parser.add_argument("-b", "--bench", type=str, default="*", help="Filter benchmark folders (e.g. '01_dnn')")
+    parser.add_argument("-p", "--project", "-t", "--test", type=str, default="*", help="Filter specific project/test names (glob pattern)")
+    parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be moved without actually moving it")
+    args = parser.parse_args()
+
+    # Use absolute path for eval_dir
+    if os.path.isabs(args.eval_dir):
+        eval_dir = args.eval_dir
+    else:
+        eval_dir = os.path.join(root, args.eval_dir)
+
+    if not os.path.exists(eval_dir):
+        console.print(f"[yellow]Evaluation directory not found: {eval_dir}[/yellow]")
+        return
+
+    # Use absolute path for backup_path
+    backup_root = os.path.abspath(args.backup_path)
+    if not args.dry_run:
+        os.makedirs(backup_root, exist_ok=True)
+
+    to_move = [] # List of (src, dst)
+
+    # Determine Move Mode/Level
+    # 1. Project level if project filter is specified
+    # 2. Benchmark level if bench filter is specified (and project is *)
+    # 3. Strategy level if strategy filter is specified (and bench/project are *)
+
+    # Iterate through strategy folders
+    for strategy in sorted(os.listdir(eval_dir)):
+        strat_path = os.path.join(eval_dir, strategy)
+        if not os.path.isdir(strat_path): continue
+        if not matches_filter(strategy, args.strategy): continue
+
+        # Level: Strategy?
+        if args.bench == "*" and args.project == "*":
+            dst_strat_path = os.path.join(backup_root, strategy)
+            to_move.append((strat_path, dst_strat_path))
+            continue
+
+        # Iterate through benchmark folders
+        for bench in sorted(os.listdir(strat_path)):
+            bench_path = os.path.join(strat_path, bench)
+            if not os.path.isdir(bench_path): continue
+            if not matches_filter(bench, args.bench): continue
+
+            # Level: Benchmark?
+            if args.project == "*":
+                dst_bench_path = os.path.join(backup_root, strategy, bench)
+                to_move.append((bench_path, dst_bench_path))
+                continue
+
+            # Level: Project
+            # Identify items to move in this benchmark folder
+            projects = [d for d in os.listdir(bench_path) if d.endswith('.prj') and os.path.isdir(os.path.join(bench_path, d))]
+            for prj in projects:
+                prj_name = prj.replace('.prj', '')
+                if matches_filter(prj_name, args.project):
+                    src = os.path.join(bench_path, prj)
+                    dst = os.path.join(backup_root, strategy, bench, prj)
+                    to_move.append((src, dst))
+            
+            # Related artifacts (logs, scripts, configs)
+            artifact_extensions = ['.log', '.txt', '.mod', '.ini', '.py', '.yaml']
+            other_files = [f for f in os.listdir(bench_path) if any(f.endswith(ext) for ext in artifact_extensions) and os.path.isfile(os.path.join(bench_path, f))]
+            
+            for f in other_files:
+                if any(fnmatch.fnmatch(f, f"*{p.strip('*')}*") for p in args.project.split(',')):
+                    src = os.path.join(bench_path, f)
+                    dst = os.path.join(backup_root, strategy, bench, f)
+                    to_move.append((src, dst))
+
+    if not to_move:
+        console.print("[yellow]No matching items found to move.[/yellow]")
+        return
+
+    # Display what will be moved
+    console.print(f"\n[bold cyan]The following {len(to_move)} items will be MOVED to {backup_root}:[/bold cyan]")
+    
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Source")
+    table.add_column("Destination")
+
+    display_count = 0
+    for src, dst in to_move:
+        if os.path.isdir(src):
+            src_base = os.path.basename(src)
+            dst_base = os.path.basename(dst)
+            table.add_row(src_base, dst_base)
+            display_count += 1
+            if display_count >= 40:
+                break
+    
+    console.print(table)
+    if len(to_move) > display_count:
+        hidden_count = len(to_move) - display_count
+        if display_count >= 40:
+            console.print(f"  ... and {hidden_count} more items (including hidden logs).")
+        else:
+            console.print(f"  (Note: {hidden_count} related files/logs will also be moved but are hidden from this view)")
+
+    if args.dry_run:
+        console.print("\n[bold yellow]Dry-run mode: No items were moved.[/bold yellow]")
+        return
+
+    if not args.yes:
+        confirm = input(f"\nAre you sure you want to move these {len(to_move)} items? (y/N): ")
+        if confirm.lower() != 'y':
+            console.print("[yellow]Aborted.[/yellow]")
+            return
+
+    # Perform Move
+    moved_count = 0
+    for src, dst in to_move:
+        try:
+            # Create destination parent directory
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            
+            # Check if destination exists
+            if os.path.exists(dst):
+                console.print(f"[yellow]Warning: Destination already exists, skipping: {dst}[/yellow]")
+                continue
+                
+            shutil.move(src, dst)
+            moved_count += 1
+        except Exception as e:
+            console.print(f"[red]Error moving {src} to {dst}: {e}[/red]")
+
+    console.print(f"\n[bold green]Successfully moved {moved_count} items.[/bold green]")
+
+if __name__ == "__main__":
+    main()

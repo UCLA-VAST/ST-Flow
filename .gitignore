@@ -1,0 +1,77 @@
+./build
+mlir/build
+e2e
+*.log
+*.options
+.python-version
+.vscode
+pass_tests
+myscratch
+HW_Exps
+transformers*
+scratch
+# frontend
+# e2e/models
+__pycache__
+# tests
+solution1
+# e2e/models
+# e2e/golden
+hls_headers
+*.whl
+models*
+cnn_blocks*
+artifacts
+polybench_*
+paper
+junk
+experiments
+*_ignore
+trash
+# designs
+*.egg-info
+_tmp
+*.prj*
+*.mod
+_mlir
+*.batch
+*.txt
+# ... but the requirements files are part of the build, not generated output.
+!requirements.txt
+!requirements-ml.txt
+# ... and neither are the CMake build files: without this, a fresh `git add` drops every
+# mlir/**/CMakeLists.txt and the compiler no longer builds from a clone.
+!CMakeLists.txt
+!docs/requirements.txt
+!licenses/*.txt
+docs/_build/
+*.csv
+.pytest_cache
+run*
+*.pdf
+codo*
+# ... but the CODO report collector is source, not a generated design directory.
+# Without this negation `codo*` silently swallowed it and it was lost once already.
+!scripts/codo/
+!scripts/codo/**
+evaluation*
+*.png
+tex
+*.xclbin
+*.xo
+PACT26/
+AE.md
+docs/ae/zenodo_packaging.md
+
+PACT26_Artifacts/
+actions-runner
+.agent/
+.agents/
+.github/
+.opencode/
+docs/agents/
+docs/Matt_Flow.md
+AGENTS.md
+graphify-out/
+
+ae_verify_out/

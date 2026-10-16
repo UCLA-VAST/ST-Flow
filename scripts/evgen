@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+import os
+import shutil
+import yaml
+import glob
+import argparse
+import stat
+import subprocess
+from stflow.config import STFlowConfig
+
+# Project root is one level up from scripts/
+root = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+VITIS_VERSION = "2024.2"
+
+def generate_eval_config(base_config_path, solver_config):
+    """
+    Reads base config, updates with solver_config using STFlowConfig,
+    and returns the final dictionary.
+    """
+    with open(base_config_path, 'r') as f:
+        base_data = yaml.safe_load(f) or {}
+
+    config = STFlowConfig.from_dict(base_data)
+
+    if 'enable_combined_dse' in solver_config:
+        config.enable_combined_dse = solver_config['enable_combined_dse']
+    
+    if 'dse_options' in solver_config:
+        dse_overrides = solver_config['dse_options']
+        for key, value in dse_overrides.items():
+            if hasattr(config.dse_options, key):
+                setattr(config.dse_options, key, value)
+            else:
+                print(f"Warning: DSEConfig has no attribute '{key}'")
+
+    return config.dict()
+
+def write_script(dest_dir, fname, content):
+    """Writes a script and sets it as executable."""
+    fpath = os.path.join(dest_dir, fname)
+    with open(fpath, "w") as f:
+        f.write(content)
+    os.chmod(fpath, os.stat(fpath).st_mode | stat.S_IEXEC)
+
+def generate_eval(src_dir, base_config_path, dest_dir, solver_config, strategy_name, bench_name, scripts_only=False):
+    """Copies tests and generates updated vanilla_config.yaml."""
+    os.makedirs(dest_dir, exist_ok=True)
+    
+    test_files = glob.glob(os.path.join(src_dir, "test_*.py"))
+    test_count = len(test_files)
+    
+    if not scripts_only:
+        for f in test_files:
+            shutil.copy(f, dest_dir)
+        
+        if test_count == 0:
+            print(f"Warning: No test files found in {src_dir}")
+            return
+
+    dest_config_path = os.path.join(dest_dir, "vanilla_config.yaml")
+    if os.path.exists(base_config_path):
+        final_config_dict = generate_eval_config(base_config_path, solver_config)
+        with open(dest_config_path, 'w') as f:
+            yaml.dump(final_config_dict, f, default_flow_style=False, sort_keys=False)
+        print(f"Generated config at {dest_config_path}")
+    else:
+        print(f"Error: Base config {base_config_path} not found.")
+
+    # 3. Generate test cache for evrun
+    cache_path = os.path.join(dest_dir, ".tests_cache")
+    print(f"Generating test cache at {cache_path}...")
+    try:
+        res = subprocess.run("pytest --collect-only -q -c /dev/null", shell=True, cwd=dest_dir, capture_output=True, text=True)
+        test_ids = [line.strip() for line in res.stdout.split('\n') if '::' in line]
+        if test_ids:
+            with open(cache_path, 'w') as f:
+                for tid in test_ids:
+                    f.write(tid + '\n')
+            print(f"Cached {len(test_ids)} tests.")
+        else:
+            print("Warning: No tests collected for cache.")
+    except Exception as e:
+        print(f"Warning: Failed to generate test cache: {e}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate evaluation folders with customized configs and run scripts.")
+    parser.add_argument("--src", type=str, help="Source test directory")
+    parser.add_argument("--dest", type=str, help="Destination directory")
+    parser.add_argument("--config", type=str, help="YAML string or path to YAML file")
+    parser.add_argument("--scripts-only", action="store_true", help="Only update scripts")
+    
+    args = parser.parse_args()
+
+    if not args.src and not args.dest:
+        benchmarks = ["02_synthetic"]
+        DSPS = 500
+        SA_RUNS = 10
+        GA_RUNS = 10
+
+        # # --- General Configurations ---
+        minlp_div_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "permutation_dse": "minlp", "unrolling_dse": "minlp"}}
+        minlp_ndiv_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": False, "permutation_dse": "minlp", "unrolling_dse": "minlp"}}
+        minlp_ndiv_max = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "max", "enforce_divisor_only_tiling": False, "permutation_dse": "minlp", "unrolling_dse": "minlp"}}
+        
+        sa_sa_div_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": SA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "permutation_dse": "sa", "unrolling_dse": "sa"}}
+        sa_sa_ndiv_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": SA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": False, "permutation_dse": "sa", "unrolling_dse": "sa"}}
+        sa_sa_ndiv_max = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": SA_RUNS, "shared_tiling_strategy": "max", "enforce_divisor_only_tiling": False, "permutation_dse": "sa", "unrolling_dse": "sa"}}
+        
+        sa_comb_div_min = {"enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": SA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "combined_dse": "sa"}}
+        sa_comb_ndiv_min = {"enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": SA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": False, "combined_dse": "sa"}} 
+        sa_comb_ndiv_max = {"enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": SA_RUNS, "shared_tiling_strategy": "max", "enforce_divisor_only_tiling": False, "combined_dse": "sa"}} 
+        
+        ga_ga_div_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": GA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "permutation_dse": "ga", "unrolling_dse": "ga"}}
+        ga_ga_ndiv_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": GA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": False, "permutation_dse": "ga", "unrolling_dse": "ga"}}
+        ga_ga_ndiv_max = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": GA_RUNS, "shared_tiling_strategy": "max", "enforce_divisor_only_tiling": False, "permutation_dse": "ga", "unrolling_dse": "ga"}}
+        
+        ga_comb_div_min = {"enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": GA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "combined_dse": "ga"}}
+        ga_comb_ndiv_min = {"enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": GA_RUNS, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": False, "combined_dse": "ga"}} 
+        ga_comb_ndiv_max = {"enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": GA_RUNS, "shared_tiling_strategy": "max", "enforce_divisor_only_tiling": False, "combined_dse": "ga"}} 
+
+        eval_configs = {
+            f"01_minlp_div_min_{DSPS}":  minlp_div_min,
+            f"02_minlp_ndiv_min_{DSPS}": minlp_ndiv_min,
+            f"03_minlp_ndiv_max_{DSPS}": minlp_ndiv_max,
+            # f"04_sa_sa_div_min_{DSPS}": sa_sa_div_min,
+            # f"05_sa_sa_ndiv_min_{DSPS}": sa_sa_ndiv_min,
+            # f"06_sa_sa_ndiv_max_{DSPS}": sa_sa_ndiv_max,
+            # f"07_sa_comb_div_min_{DSPS}": sa_comb_div_min,
+            # f"08_sa_comb_ndiv_min_{DSPS}": sa_comb_ndiv_min,
+            # f"09_sa_comb_ndiv_max_{DSPS}": sa_comb_ndiv_max,
+            # f"10_ga_ga_div_min_{DSPS}": ga_ga_div_min,
+            # f"11_ga_ga_ndiv_min_{DSPS}": ga_ga_ndiv_min,
+            # f"12_ga_ga_ndiv_max_{DSPS}": ga_ga_ndiv_max,
+            # f"13_ga_comb_div_min_{DSPS}": ga_comb_div_min,
+            # f"14_ga_comb_ndiv_min_{DSPS}": ga_comb_ndiv_min,
+            # f"15_ga_comb_ndiv_max_{DSPS}": ga_comb_ndiv_max,
+        }
+
+        # # GPT multi-run configs (all using div min)
+        # GPT_RUNS = 10
+        # sa_comb_gpt = {"copies": GPT_RUNS, "enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "combined_dse": "sa"}}
+        # sa_sa_gpt = {"copies": GPT_RUNS, "enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "permutation_dse": "sa", "unrolling_dse": "sa"}}
+        # ga_comb_gpt = {"copies": GPT_RUNS, "enable_combined_dse": True, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "combined_dse": "ga"}}
+        # ga_ga_gpt = {"copies": GPT_RUNS, "enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "permutation_dse": "ga", "unrolling_dse": "ga"}}
+        # eval_configs = {
+        #     f"20_sa_comb_gpt_{DSPS}" : sa_comb_gpt,
+        #     f"21_sa_sa_gpt_{DSPS}" : sa_sa_gpt,
+        #     f"22_ga_comb_gpt_{DSPS}" : ga_comb_gpt,
+        #     f"23_ga_ga_gpt_{DSPS}" : ga_ga_gpt,
+        # }
+
+        benchmarks = ["03_polybench"]
+        DSPS = 500
+        SA_RUNS = 1
+        GA_RUNS = 1
+        # Polybench combined DSE runs
+        minlp_div_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": True, "permutation_dse": "minlp", "unrolling_dse": "minlp"}}
+        # minlp_ndiv_min = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "min", "enforce_divisor_only_tiling": False, "permutation_dse": "minlp", "unrolling_dse": "minlp"}}
+        # minlp_ndiv_max = {"enable_combined_dse": False, "dse_options": {"DSP_limit": DSPS, "num_n_runs": 1, "shared_tiling_strategy": "max", "enforce_divisor_only_tiling": False, "permutation_dse": "minlp", "unrolling_dse": "minlp"}}
+        
+        eval_configs = {
+            f"40_codo_div_min_{DSPS}":  minlp_div_min,
+            # f"41_codo_ndiv_min_{DSPS}": minlp_ndiv_min,
+            # f"42_codo_ndiv_max_{DSPS}": minlp_ndiv_max,
+        }
+        
+        for eval_folder, solver_cfg in eval_configs.items():
+            copies = solver_cfg.get('copies', 1)
+            for run_idx in range(copies):
+                run_suffix = f"_r{run_idx:02d}" if copies > 1 else ""
+                for bench in benchmarks:
+                    src_test_dir = os.path.join(root, "test", bench)
+                    base_config = os.path.join(root, "test", "configs", f"{bench}.yaml")
+                    dest = os.path.join(root, "evaluation", eval_folder, f"{bench}{run_suffix}")
+                    
+                    print(f"\n--- Processing {eval_folder}/{bench}{run_suffix} (Scripts Only: {args.scripts_only}) ---")
+                    generate_eval(src_test_dir, base_config, dest, solver_cfg, eval_folder, bench, args.scripts_only)
+    else:
+        if not args.src or not args.dest or not args.config:
+            parser.print_help()
+            return
+            
+        if os.path.exists(args.config):
+            with open(args.config, 'r') as f:
+                solver_cfg = yaml.safe_load(f)
+        else:
+            solver_cfg = yaml.safe_load(args.config)
+            
+        bench_name = os.path.basename(args.src.rstrip('/'))
+        base_config = os.path.join(root, "test", "configs", f"{bench_name}.yaml")
+        strategy_name = os.path.basename(os.path.dirname(args.dest.rstrip('/')))
+        
+        generate_eval(args.src, base_config, args.dest, solver_cfg, strategy_name, bench_name, args.scripts_only)
+
+if __name__ == "__main__":
+    main()

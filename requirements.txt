@@ -1,0 +1,32 @@
+numpy
+scipy
+numba
+# pybind11 3.x breaks the MLIR 20 Python bindings: IRCore.cpp uses keep_alive with
+# the def_property family, which pybind11 3.0 turned into a hard static_assert.
+pybind11>=2.10,<3
+PyYAML
+xmltodict
+tabulate
+pytest
+# pytest.ini passes -n10, which requires xdist. Without it every pytest invocation
+# fails on an unrecognized argument.
+pytest-xdist
+pytest-timeout
+clang-format
+black==24.8.0
+pylint==3.0.2
+# Pinned: the paper's figures were produced with 3.10.5. With this pin the
+# regenerated PDFs are byte-identical to the archived ones apart from the embedded
+# creation timestamp; later matplotlib shifts tick layout and font subsetting.
+matplotlib==3.10.5
+pandas
+astpretty
+packaging
+psutil
+sympy
+rich
+ml_dtypes
+transformers==4.51.0
+rich
+pandas
+matplotlib

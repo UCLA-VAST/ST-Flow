@@ -1,0 +1,6 @@
+# Documentation build only (Read the Docs / local `sphinx-build`); not needed to use ST-Flow.
+sphinx>=7.3,<9
+myst-parser>=3,<5
+furo>=2024.8.6
+sphinx-copybutton>=0.5
+sphinx-design>=0.6

@@ -1,0 +1,20 @@
+
+enable_unrolling: True
+enable_permutation: True
+enable_combined_dse: False
+
+atol: 0.01
+
+dse_options:
+  permutation_dse: 'minlp'
+  unrolling_dse: 'minlp'
+  balanced_mapping_similarity_threshold: 1.1
+  balanced_mapping_ub_threshold: 1.1
+  
+  latency_memory_ratio: 80
+
+  min_time_loop_size: 10
+
+  objective_scaling_factor: 10
+
+  # unrolling_ampl_solver: "ilogcp"

@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+import os
+import argparse
+import shutil
+import fnmatch
+import glob
+import sys
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+
+def matches_filter(name, pattern_str):
+    """Checks if name matches any of the comma-separated patterns."""
+    patterns = pattern_str.split(',')
+    return any(fnmatch.fnmatch(name, p.strip()) for p in patterns)
+
+def main():
+    # Project root is one level up from scripts/
+    root = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    eval_dir = os.path.join(root, "evaluation")
+
+    parser = argparse.ArgumentParser(description="Evaluation Cleanup Utility")
+    parser.add_argument("-s", "--filter", type=str, default="*", help="Filter strategy folders (e.g. '*sa*')")
+    parser.add_argument("-b", "--bench", type=str, default="*", help="Filter benchmarks (e.g. '01_dnn')")
+    parser.add_argument("-p", "--project", type=str, default="*", help="Filter specific project names (glob pattern)")
+    parser.add_argument("-l", "--logs", action="store_true", help="Only delete log files (.log, .txt, .mod, .ini), keep .prj folders")
+    parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    args = parser.parse_args()
+
+    if not os.path.exists(eval_dir):
+        console.print(f"[yellow]Evaluation directory not found: {eval_dir}[/yellow]")
+        return
+
+    to_delete = []
+
+    # Iterate through strategy folders
+    for strategy in sorted(os.listdir(eval_dir)):
+        strat_path = os.path.join(eval_dir, strategy)
+        if not os.path.isdir(strat_path): continue
+        if not matches_filter(strategy, args.filter): continue
+
+        # Iterate through benchmark folders
+        for bench in sorted(os.listdir(strat_path)):
+            bench_path = os.path.join(strat_path, bench)
+            if not os.path.isdir(bench_path): continue
+            if not matches_filter(bench, args.bench): continue
+
+            # Identify items to delete in this benchmark folder
+            if not args.logs and args.project == "*":
+                # Delete the entire benchmark folder
+                to_delete.append(bench_path)
+            else:
+                items = []
+                # 2. Logs and other artifacts
+                if args.logs:
+                    # Only delete .log files (slurm logs)
+                    log_files = [f for f in os.listdir(bench_path) if f.endswith('.log') and os.path.isfile(os.path.join(bench_path, f))]
+                    for f in log_files:
+                        if args.project != "*":
+                            if not any(fnmatch.fnmatch(f, f"*{p}*") for p in args.project.split(',')):
+                                continue
+                        items.append(f)
+                else:
+                    # Project-level clean or filtered artifacts
+                    # 1. Projects (.prj)
+                    projects = [d for d in os.listdir(bench_path) if d.endswith('.prj') and os.path.isdir(os.path.join(bench_path, d))]
+                    for prj in projects:
+                        prj_name = prj.replace('.prj', '')
+                        if matches_filter(prj_name, args.project):
+                            items.append(prj)
+                    
+                    # 2. Related artifacts
+                    artifact_extensions = ['.log', '.txt', '.mod', '.ini']
+                    other_files = [f for f in os.listdir(bench_path) if any(f.endswith(ext) for ext in artifact_extensions) and os.path.isfile(os.path.join(bench_path, f))]
+                    
+                    for f in other_files:
+                        if args.project != "*":
+                            if not any(fnmatch.fnmatch(f, f"*{p}*") for p in args.project.split(',')):
+                                continue
+                        items.append(f)
+
+                for item in items:
+                    to_delete.append(os.path.join(bench_path, item))
+
+    if not to_delete:
+        console.print("[yellow]No matching files found to clean.[/yellow]")
+        return
+
+    # Sort for consistent display
+    to_delete.sort()
+
+    console.print(f"\n[bold red]The following {len(to_delete)} items will be DELETED:[/bold red]")
+    
+    # Display in a table if there are many, or just a list
+    if len(to_delete) <= 30:
+        for item in to_delete:
+            rel = os.path.relpath(item, root)
+            console.print(f"  - {rel}")
+    else:
+        # Show first 15 and last 15
+        for item in to_delete[:15]:
+            rel = os.path.relpath(item, root)
+            console.print(f"  - {rel}")
+        console.print(f"  ... [bold]{len(to_delete)-30}[/bold] more items ...")
+        for item in to_delete[-15:]:
+            rel = os.path.relpath(item, root)
+            console.print(f"  - {rel}")
+
+    if not args.yes:
+        confirm = input(f"\nAre you sure you want to delete these {len(to_delete)} items? (y/N): ")
+        if confirm.lower() != 'y':
+            console.print("[yellow]Aborted.[/yellow]")
+            return
+
+    # Perform deletion
+    deleted_count = 0
+    for item in to_delete:
+        try:
+            if os.path.isdir(item):
+                shutil.rmtree(item)
+            else:
+                os.remove(item)
+            deleted_count += 1
+        except Exception as e:
+            console.print(f"[red]Error deleting {item}: {e}[/red]")
+
+    console.print(f"\n[bold green]Successfully deleted {deleted_count} items.[/bold green]")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,23 @@
+set(LLVM_TARGET_DEFINITIONS Dataflow.td)
+mlir_tablegen(DataflowDialect.h.inc -gen-dialect-decls -dialect=dataflow)
+mlir_tablegen(DataflowDialect.cpp.inc -gen-dialect-defs -dialect=dataflow)
+mlir_tablegen(Dataflow.h.inc -gen-op-decls)
+mlir_tablegen(Dataflow.cpp.inc -gen-op-defs)
+mlir_tablegen(DataflowTypes.h.inc -gen-typedef-decls -typedefs-dialect=dataflow)
+mlir_tablegen(DataflowTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=dataflow)
+add_public_tablegen_target(MLIRStreamHLSDataflowIncGen)
+
+set(LLVM_TARGET_DEFINITIONS Dataflow.td)
+mlir_tablegen(DataflowEnums.h.inc -gen-enum-decls)
+mlir_tablegen(DataflowEnums.cpp.inc -gen-enum-defs)
+add_public_tablegen_target(MLIRDataflowEnumsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS Interfaces.td)
+mlir_tablegen(DataflowInterfaces.h.inc -gen-op-interface-decls)
+mlir_tablegen(DataflowInterfaces.cpp.inc -gen-op-interface-defs)
+add_public_tablegen_target(MLIRDataflowInterfacesIncGen)
+
+set(LLVM_TARGET_DEFINITIONS Dataflow.td)
+mlir_tablegen(DataflowAttributes.h.inc -gen-attrdef-decls -attrdefs-dialect=dataflow)
+mlir_tablegen(DataflowAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=dataflow)
+add_public_tablegen_target(MLIRDataflowAttributesIncGen)

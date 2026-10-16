@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import argparse
+import glob
+import fnmatch
+from rich.console import Console
+from rich.table import Table
+import sys
+
+# Default paths based on project root
+PRJ_ROOT = os.environ.get('PRJ_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CODO_DIR_DEFAULT = os.path.join(PRJ_ROOT, "scripts/codo")
+DESIGNS_DIR_DEFAULT = os.path.join(PRJ_ROOT, "evaluation/codo/designs")
+
+def get_hls_utils(codo_dir):
+    """Dynamically imports hls_utils from the specified codo_dir."""
+    if codo_dir not in sys.path:
+        sys.path.append(codo_dir)
+    try:
+        import hls_utils
+        return hls_utils
+    except ImportError:
+        console.print(f"[red]Error: Could not import hls_utils from {codo_dir}[/red]")
+        sys.exit(1)
+
+console = Console()
+
+def run_command(cmd, cwd=None, capture=False):
+    if not capture:
+        console.print(f"[bold blue]Running:[/bold blue] {cmd} in {cwd}")
+    return subprocess.run(cmd, shell=True, cwd=cwd, capture_output=capture, text=True)
+
+def matches_filter(name, pattern_str):
+    """Checks if name matches any of the comma-separated patterns."""
+    patterns = pattern_str.split(',')
+    return any(fnmatch.fnmatch(name, p.strip()) for p in patterns)
+
+def get_job_status():
+    """Returns a list of current Slurm jobs for the user."""
+    res = run_command("squeue --me --format='%i|%200j|%T|%M'", capture=True)
+    lines = res.stdout.strip().split('\n')[1:]
+    jobs = []
+    for line in lines:
+        parts = line.split('|')
+        if len(parts) >= 4:
+            jobs.append({
+                'id': parts[0].strip(),
+                'name': parts[1].strip(),
+                'status': parts[2].strip(),
+                'time': parts[3].strip()
+            })
+    return jobs
+
+# Default resources from evrun
+MODE_RESOURCES = {
+    "csim":      {"cpus": 1, "mem": "4G",  "q": "low"},
+    "syn":       {"cpus": 4, "mem": "32G", "q": "low"},
+    "cosim":     {"cpus": 4, "mem": "64G", "q": "low"},
+}
+VITIS_VERSION = "2024.2"
+
+def get_project_status(test_path, codo_dir):
+    """Returns a status dict for a codo project."""
+    hls_utils = get_hls_utils(codo_dir)
+    
+    test_name = os.path.basename(test_path)
+    hls_dir = os.path.join(test_path, 'hls')
+    vitis_prj_dir = os.path.join(hls_dir, f"{test_name}.prj.vitis")
+    
+    syn_report = os.path.join(vitis_prj_dir, 'solution1/syn/report/main_graph_csynth.xml')
+    cosim_report = os.path.join(vitis_prj_dir, 'solution1/sim/report/main_graph_cosim.rpt')
+    csim_log = os.path.join(vitis_prj_dir, 'solution1/csim/report/main_graph_csim.log')
+    
+    status = {'csim': '-', 'syn': '-', 'v_min': '-', 'v_max': '-', 'cosim': '-', 'rtl_cycles': '-'}
+    
+    # Check CSIM
+    c_status = hls_utils.parse_vitis_hls_csim_log(csim_log)
+    if c_status:
+        status['csim'] = c_status
+
+    # Check Synthesis
+    if os.path.exists(syn_report):
+        status['syn'] = 'Pass'
+        v_res = hls_utils.parse_vitis_hls_report(syn_report)
+        status['v_min'] = v_res.get('min_cycles', '-')
+        status['v_max'] = v_res.get('max_cycles', '-')
+    elif os.path.exists(os.path.join(vitis_prj_dir, 'solution1/syn/report/')):
+        status['syn'] = 'Fail'
+        
+    # Check Cosim
+    if os.path.exists(cosim_report):
+        latency, c_status = hls_utils.parse_vitis_hls_cosim_report(cosim_report)
+        status['cosim'] = c_status if c_status else 'Fail'
+        status['rtl_cycles'] = str(latency) if latency is not None else '-'
+    
+    # Check CSIM (heuristic: check log if report doesn't exist)
+    # Vitis HLS doesn't always produce a clean XML/RPT for csim in a fixed location
+    # But we can check for the presence of csim outputs if needed.
+    # For now, we'll mark as '-' if no info.
+    
+    return status
+
+def main():
+    parser = argparse.ArgumentParser(description="Codo HLS Runner Utility")
+    parser.add_argument("action", choices=["submit", "status", "cancel", "report"], help="Action to perform")
+    parser.add_argument("-m", "--mode", choices=["csim", "syn", "cosim"], default=None, help="Mode for submission")
+    parser.add_argument("-b", "--bench", type=str, default="*", help="Filter benchmarks (e.g. '01_dnn')")
+    parser.add_argument("-t", "--test", type=str, default="*", help="Filter individual tests (e.g. '*rwkv*')")
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    parser.add_argument("--force", action="store_true", help="Force submission even if the step has already passed")
+    parser.add_argument("--codo-dir", default=CODO_DIR_DEFAULT, help="Codo root directory")
+    parser.add_argument("--designs-dir", default=DESIGNS_DIR_DEFAULT, help="Codo designs directory")
+    parser.add_argument("-o", "--output", help="Output CSV filename for 'report' action")
+    args = parser.parse_args()
+
+    codo_dir = args.codo_dir
+    designs_dir = args.designs_dir
+    
+    if args.action == "submit":
+        if args.mode is None:
+            args.mode = "syn"
+
+        active_jobs = get_job_status()
+        active_job_names = set(j['name'] for j in active_jobs)
+        res_cfg = MODE_RESOURCES[args.mode]
+
+        # Discover benchmarks (subdirectories of codo/designs/ that contain tests)
+        benchmarks = [d for d in sorted(os.listdir(designs_dir)) 
+                     if os.path.isdir(os.path.join(designs_dir, d)) and d not in ('logs', '.pytest_cache')]
+        
+        for bench in benchmarks:
+            if not matches_filter(bench, args.bench): continue
+            bench_path = os.path.join(designs_dir, bench)
+            
+            tests = [d for d in sorted(os.listdir(bench_path)) 
+                     if os.path.isdir(os.path.join(bench_path, d)) and d not in ('__pycache__', 'codo', 'logs')]
+            
+            for test in tests:
+                if not matches_filter(test, args.test): continue
+                test_path = os.path.join(bench_path, test)
+                hls_dir = os.path.join(test_path, "hls")
+                tcl_file = f"{args.mode}.tcl"
+                
+                if not os.path.exists(os.path.join(hls_dir, tcl_file)):
+                    continue
+                
+                job_name = f"codo_{bench}_{test}_{args.mode}"
+                
+                if job_name in active_job_names:
+                    status = next((j['status'] for j in active_jobs if j['name'] == job_name), "Active")
+                    console.print(f"  [yellow]Skipping {job_name}: Already {status}[/yellow]")
+                    continue
+
+                # Incremental Build Logic
+                if not args.force:
+                    stat = get_project_status(test_path, codo_dir)
+                    if args.mode == "csim" and stat['csim'] == 'Pass':
+                        console.print(f"  [green]Skipping {job_name}: Already passed CSIM[/green]")
+                        continue
+                    if args.mode == "syn" and stat['syn'] == 'Pass':
+                        console.print(f"  [green]Skipping {job_name}: Already passed Synthesis[/green]")
+                        continue
+                    if args.mode == "cosim" and stat['cosim'] == 'Pass':
+                        console.print(f"  [green]Skipping {job_name}: Already passed Co-simulation[/green]")
+                        continue
+
+                cpus = res_cfg["cpus"]
+                mem = res_cfg["mem"]
+                
+                vitis_env = f"ml load xilinx/vivado/{VITIS_VERSION} && source /opt/ampl/tools/ampl_activate.sh"
+                hls_cmd = f"vitis_hls -f {tcl_file}"
+                
+                sbatch_opts = [
+                    f"--job-name={job_name}",
+                    f"--output={job_name}_%j.log",
+                    f"--cpus-per-task={cpus}",
+                    f"--mem={mem}",
+                    "-p batch",
+                    f"-q {res_cfg['q']}",
+                    "--exclude=c05,c04,c03,c02", # Exclude problematic nodes
+                    f"--export=ALL,PRJ_PATH={hls_dir}"
+                ]
+                
+                cmd = f"sbatch {' '.join(sbatch_opts)} --wrap '{vitis_env} && {hls_cmd}'"
+                run_command(cmd, cwd=hls_dir)
+
+    elif args.action == "status":
+        jobs = get_job_status()
+        
+        table = Table(title="Codo HLS Status Summary")
+        table.add_column("Benchmark", style="cyan", no_wrap=True)
+        table.add_column("Test", style="magenta", no_wrap=True)
+        table.add_column("Active Job", style="yellow")
+        table.add_column("CSIM", justify="center")
+        table.add_column("SYN", justify="center")
+        table.add_column("V Cycles", justify="center")
+        table.add_column("COSIM", justify="center")
+        table.add_column("RTL Cycles", justify="right")
+
+        benchmarks = [d for d in sorted(os.listdir(designs_dir)) 
+                     if os.path.isdir(os.path.join(designs_dir, d)) and d not in ('logs', '.pytest_cache')]
+        
+        for bench in benchmarks:
+            if not matches_filter(bench, args.bench): continue
+            bench_path = os.path.join(designs_dir, bench)
+            
+            tests = [d for d in sorted(os.listdir(bench_path)) 
+                     if os.path.isdir(os.path.join(bench_path, d)) and d not in ('__pycache__', 'codo', 'logs')]
+            
+            for test in tests:
+                if not matches_filter(test, args.test): continue
+                test_path = os.path.join(bench_path, test)
+                
+                # Active jobs
+                active = []
+                for j in jobs:
+                    if j['name'].startswith(f"codo_{bench}_{test}_"):
+                        mode_suffix = j['name'].split('_')[-1]
+                        active.append(f"{mode_suffix}({j['status'][0]})")
+                
+                job_str = ", ".join(active) if active else "-"
+                
+                stat = get_project_status(test_path, codo_dir)
+                
+                def fmt_stat(s):
+                    if s == 'Pass': return "[green]\u2714[/green]"
+                    if s == 'Fail': return "[red]\u2718[/red]"
+                    return "[grey50]-[/grey50]"
+
+                table.add_row(
+                    bench,
+                    test,
+                    job_str,
+                    fmt_stat(stat['csim']),
+                    fmt_stat(stat['syn']),
+                    f"{stat['v_min']}-{stat['v_max']}" if stat['v_min'] != '-' else "-",
+                    fmt_stat(stat['cosim']),
+                    stat['rtl_cycles']
+                )
+        console.print(table)
+
+    elif args.action == "cancel":
+        jobs = get_job_status()
+        to_cancel = [j for j in jobs if j['name'].startswith("codo_") and matches_filter(j['name'], f"*{args.test}*")]
+        
+        if not to_cancel:
+            console.print("[yellow]No matching codo jobs found.[/yellow]")
+            return
+            
+        console.print(f"[bold red]Found {len(to_cancel)} matching jobs to cancel.[/bold red]")
+        if not args.yes:
+            confirm = input("Confirm cancel? (y/N): ")
+            if confirm.lower() != 'y': return
+            
+        for j in to_cancel:
+            run_command(f"scancel {j['id']}")
+
+    elif args.action == "report":
+        cmd = f"python3 {os.path.join(codo_dir, 'collect_codo_reports.py')} -i {designs_dir}"
+        if args.output:
+            cmd += f" -o {args.output}"
+        run_command(cmd)
+
+if __name__ == "__main__":
+    main()
