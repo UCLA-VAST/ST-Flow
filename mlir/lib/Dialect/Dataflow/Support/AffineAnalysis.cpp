@@ -510,7 +510,7 @@ SmallVector<SmallVector<std::pair<size_t, LoopInfo>>> getRelevantLoopsForAllCarr
   LoopBandInfo &loopBandInfo,
   SmallVectorImpl<Value> &carrierIVs
 ) {
-  SmallVector<SmallVector<std::pair<size_t, LoopInfo>>, 4> allRelevantLoops;
+  SmallVector<SmallVector<std::pair<size_t, LoopInfo>>> allRelevantLoops;
   for(auto carrierIV : carrierIVs){
     SmallVector<std::pair<size_t, LoopInfo>> relevantLoops = getRelevantLoops(idx, loopBandInfo, carrierIV);
     allRelevantLoops.push_back(relevantLoops);

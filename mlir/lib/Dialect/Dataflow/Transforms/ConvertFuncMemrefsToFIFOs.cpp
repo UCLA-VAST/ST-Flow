@@ -351,7 +351,7 @@ ModuleOp convertMemrefArgsToFIFOs(ModuleOp &module, const DenseSet<unsigned> &ar
   return module;
 }
 
-void mlir::streamhls::convertFuncMemrefsToFIFOsDFG(DFG &dfg) {
+void convertFuncMemrefsToFIFOsDFG(DFG &dfg) {
   resolveDFGEdges(dfg);
 
   for (auto &nodePair : dfg.nodes) {
