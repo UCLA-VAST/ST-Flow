@@ -44,9 +44,9 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           echo "llvm=$(git ls-tree HEAD extern/llvm-project | awk '{print $3}')" >> "$GITHUB_OUTPUT"
-      - name: Cache LLVM/MLIR
+      - name: Restore LLVM/MLIR
         id: llvm-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /opt/llvm-stflow
           key: llvm-manylinux_2_28-${{ steps.prep.outputs.llvm }}-${{ hashFiles('scripts/build_llvm.sh') }}
@@ -57,6 +57,14 @@ jobs:
           LLVM_CMAKE_BUILD_DIR=/mnt/llvm-build NUM_THREADS=$(nproc) \
             bash scripts/build_llvm.sh "$LLVM_PREFIX"
           rm -rf /mnt/llvm-build
+      # Save right away: a cache saved at the end of the job would be lost if a later
+      # step failed, and the LLVM build is by far the slowest step.
+      - name: Save LLVM/MLIR
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /opt/llvm-stflow
+          key: ${{ steps.llvm-cache.outputs.cache-primary-key }}
       - name: Build the wheel
         run: |
           $PY -m venv /tmp/build-venv && . /tmp/build-venv/bin/activate
@@ -68,7 +76,9 @@ jobs:
         run: |
           $PY -m venv /tmp/test-venv && . /tmp/test-venv/bin/activate
           pip install wheelhouse/*.whl
-          cd / && python -c "from stflow._mlir._mlir_libs import _streamhls; print('ok')"
+          # `import stflow` needs the pinned PyTorch front end, as for every user.
+          pip install --retries 10 --timeout 120 -r requirements-ml.txt
+          cd / && python -c "from stflow._mlir._mlir_libs import _streamhls; import stflow.main; print('ok')"
       - uses: actions/upload-artifact@v4
         with:
           name: wheel
