@@ -33,7 +33,7 @@ jobs:
           CIBW_BUILD: cp312-manylinux_x86_64
           # The prebuilt LLVM/MLIR targets glibc 2.34, so the wheel is manylinux_2_34
           # (Ubuntu 22.04+, Debian 12+, RHEL/Rocky 9+). Older systems use Tier 3.
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+          CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux_2_34_x86_64
           CIBW_BUILD_VERBOSITY: 1
           # CMake downloads and MD5-checks the prebuilt LLVM/MLIR (STFLOW_FETCH_LLVM).
           CIBW_TEST_COMMAND: >-
