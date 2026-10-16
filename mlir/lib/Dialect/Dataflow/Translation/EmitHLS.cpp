@@ -80,7 +80,7 @@ static bool BIT_FLAG = false;
 static SmallString<16> getTypeName(Type valType) {
   if(auto vectorType = valType.dyn_cast<VectorType>()) {
     auto elementType = vectorType.getElementType();
-    auto elementTypeName = getTypeName(elementType).c_str();
+    auto elementTypeName = std::string(getTypeName(elementType));
     auto length = std::accumulate(vectorType.getShape().begin(), vectorType.getShape().end(), 1, std::multiplies<int>());
     std::string vectorTypeName = "Vector<" + std::string(elementTypeName) + ", " + std::to_string(length) + ">";
     return SmallString<16>(vectorTypeName);

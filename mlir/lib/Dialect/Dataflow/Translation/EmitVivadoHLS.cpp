@@ -56,7 +56,7 @@ static bool BIT_FLAG = false;
 static SmallString<16> getTypeName(Type valType) {
   if(auto vectorType = valType.dyn_cast<VectorType>()) {
     auto elementType = vectorType.getElementType();
-    auto elementTypeName = getTypeName(elementType).c_str();
+    auto elementTypeName = std::string(getTypeName(elementType));
     auto length = std::accumulate(vectorType.getShape().begin(), vectorType.getShape().end(), 1, std::multiplies<int>());
     std::string vectorTypeName = "hls::vector<" + std::string(elementTypeName) + ", " + std::to_string(length) + ">";
     return SmallString<16>(vectorTypeName);
@@ -104,12 +104,12 @@ static SmallString<16> getTypeName(Type valType) {
     }
   } else if (auto streamType = valType.dyn_cast<dataflow::StreamType>()) {// handle stream type
     auto elementType = streamType.getElementType();
-    auto elementTypeName = getTypeName(elementType).c_str();
+    auto elementTypeName = std::string(getTypeName(elementType));
     std::string streamTypeName = "hls::stream<" + std::string(elementTypeName) + ">";
     return SmallString<16>(streamTypeName);
   } else if(auto vectorType = valType.dyn_cast<VectorType>()) {
     auto elementType = vectorType.getElementType();
-    auto elementTypeName = getTypeName(elementType).c_str();
+    auto elementTypeName = std::string(getTypeName(elementType));
     auto length = std::accumulate(vectorType.getShape().begin(), vectorType.getShape().end(), 1, std::multiplies<int>());
     std::string vectorTypeName = "hls::vector<" + std::string(elementTypeName) + ", " + std::to_string(length) + ">";
     return SmallString<16>(vectorTypeName);
