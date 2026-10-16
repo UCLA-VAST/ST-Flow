@@ -76,8 +76,8 @@ not work on your system; every tier ends with the same installed `stflow` packag
 
 | Tier | Command | Needs | Time |
 |---|---|---|---|
-| **1. Prebuilt wheel** | `pip install stflow` | Linux x86_64, glibc ≥ 2.34 (Ubuntu 22.04+, Debian 12+, RHEL/Rocky 9+) | ~1 min |
-| **2. From source, prebuilt LLVM** | `pip install .` | the same, plus a C/C++ toolchain | ~10–20 min |
+| **1. Prebuilt wheel** | `pip install stflow` | Linux x86_64 with glibc ≥ 2.28 (Ubuntu 20.04+, Debian 10+, RHEL/Rocky 8+) | ~1 min |
+| **2. From source, prebuilt LLVM** | `pip install .` | Linux x86_64 with GCC ≥ 12's C++ runtime (Ubuntu 22.04+, Debian 12+), plus a C/C++ toolchain | ~10–20 min |
 | **3. From source, LLVM too** | `scripts/build_llvm.sh`, then `pip install .` | any Linux x86_64 with a C++17 compiler | 1–2 h |
 
 All tiers need **Python 3.12** (the pinned PyTorch wheels are `cp312`-only; not 3.11 or
@@ -125,8 +125,9 @@ this order:
    that cache, checking its MD5 first. Set `STFLOW_FETCH_LLVM=OFF` to forbid this.
 
 If the prebuilt LLVM cannot run on your system, the build stops at configure time with a
-message saying so; continue with Tier 3. The C++ build uses the clang shipped with that
-LLVM. To bound its parallelism on a memory-limited machine, set
+message saying so (on RHEL/Rocky 9, for example, whose C++ runtime is too old for it);
+continue with Tier 3. The C++ build uses the clang shipped with that LLVM if it can link
+on your system, and the default compiler otherwise. To bound its parallelism on a memory-limited machine, set
 `CMAKE_BUILD_PARALLEL_LEVEL` (for example `8`). For development, `pip install -e .`
 gives an editable install; add `-C cmake.build-type=Debug` for an assertions-enabled
 debug build of the C++ passes.

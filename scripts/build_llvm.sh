@@ -13,6 +13,8 @@
 # Environment:
 #   NUM_THREADS   parallel jobs (default: half the cores; linking is memory-bound)
 #   CC / CXX      compilers (default: clang/clang++ if found, else gcc/g++)
+#   LLVM_PROJECTS LLVM projects to build (default: mlir; ST-Flow does not need clang)
+#   LLVM_CMAKE_BUILD_DIR  build directory (default: extern/llvm-project/build; ~20 GB)
 #
 # Run it inside a Slurm allocation yourself if your cluster needs one, e.g.
 #   srun -c32 --mem=64G bash scripts/build_llvm.sh
@@ -22,7 +24,7 @@ set -euo pipefail
 PRJ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${1:-$HOME/opt/llvm-stflow}"
 SRC_DIR="$PRJ_ROOT/extern/llvm-project"
-BUILD_DIR="$SRC_DIR/build"
+BUILD_DIR="${LLVM_CMAKE_BUILD_DIR:-$SRC_DIR/build}"
 NUM_THREADS="${NUM_THREADS:-$(( $(nproc) / 2 > 1 ? $(nproc) / 2 : 1 ))}"
 
 PY="$(command -v python3 || command -v python)"
@@ -55,7 +57,7 @@ echo "Compilers   : $CC / $CXX ${LLD_FLAG:+(lld)}"
 echo "Parallelism : $NUM_THREADS"
 
 cmake -G Ninja -S "$SRC_DIR/llvm" -B "$BUILD_DIR" \
-    -DLLVM_ENABLE_PROJECTS="clang;mlir" \
+    -DLLVM_ENABLE_PROJECTS="${LLVM_PROJECTS:-mlir}" \
     -DLLVM_BUILD_EXAMPLES=OFF \
     -DLLVM_TARGETS_TO_BUILD="host" \
     -DCMAKE_BUILD_TYPE=Release \

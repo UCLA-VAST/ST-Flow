@@ -89,8 +89,9 @@ if(NOT MLIR_DIR OR NOT LLVM_DIR)
     "scripts/build_llvm.sh (see the installation guide).")
 endif()
 
-# The prebuilt release is linked against glibc 2.34. On an older system its tools
-# cannot run, and every later step would fail with an obscure linker error, so check
+# The prebuilt release needs glibc >= 2.34 and the C++ runtime of GCC >= 12
+# (GLIBCXX_3.4.30). On an older system its tools cannot run, and every later step
+# would fail with an obscure linker error, so check
 # once, here, and point at the source build instead.
 if(STREAMHLS_LLVM_ROOT AND EXISTS "${STREAMHLS_LLVM_ROOT}/bin/llvm-config")
   execute_process(COMMAND "${STREAMHLS_LLVM_ROOT}/bin/llvm-config" --version
@@ -98,7 +99,8 @@ if(STREAMHLS_LLVM_ROOT AND EXISTS "${STREAMHLS_LLVM_ROOT}/bin/llvm-config")
   if(NOT _llvm_rc EQUAL 0)
     message(FATAL_ERROR
       "The LLVM/MLIR at ${STREAMHLS_LLVM_ROOT} does not run on this system:\n"
-      "${_llvm_err}\nThe prebuilt release needs glibc >= 2.34. Build LLVM/MLIR from "
+      "${_llvm_err}\nThe prebuilt release needs glibc >= 2.34 and the C++ runtime of "
+      "GCC >= 12 (GLIBCXX_3.4.30). Build LLVM/MLIR from "
       "source with scripts/build_llvm.sh and set STFLOW_LLVM_DIR to the result.")
   endif()
 endif()

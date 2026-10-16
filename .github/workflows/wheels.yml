@@ -1,5 +1,11 @@
 # Build the PyPI distributions (installation Tier 1) and publish them on a version tag.
 #
+# The wheel is built inside the manylinux_2_28 container against an LLVM/MLIR built in
+# that same container, so it runs on any x86_64 Linux with glibc >= 2.28 (Ubuntu
+# 20.04+, Debian 10+, RHEL/Rocky 8+). The prebuilt LLVM on Zenodo cannot be used here:
+# it needs GCC 12's C++ runtime, newer than the container's. The LLVM build is cached
+# per submodule commit and build script, so only the first run pays for it.
+#
 # Publishing uses PyPI trusted publishing: no token is stored in this repository.
 # One-time setup on pypi.org (project owner): Publishing -> add a GitHub publisher
 # for UCLA-VAST/ST-Flow, workflow `wheels.yml`, environment `pypi`.
@@ -23,21 +29,46 @@ jobs:
 
   wheel:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+      # The runner's /mnt disk has room for the LLVM build tree.
+      options: -v /mnt:/mnt
+    env:
+      PY: /opt/python/cp312-cp312/bin/python3.12
+      LLVM_PREFIX: /opt/llvm-stflow
     steps:
-      # The prebuilt LLVM/MLIR is 4.4 GB extracted; make room on the runner.
-      - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: actions/checkout@v4
-      - uses: pypa/cibuildwheel@v2.23
-        env:
-          CIBW_BUILD: cp312-manylinux_x86_64
-          # The prebuilt LLVM/MLIR targets glibc 2.34, so the wheel is manylinux_2_34
-          # (Ubuntu 22.04+, Debian 12+, RHEL/Rocky 9+). Older systems use Tier 3.
-          CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux_2_34_x86_64
-          CIBW_BUILD_VERBOSITY: 1
-          # CMake downloads and MD5-checks the prebuilt LLVM/MLIR (STFLOW_FETCH_LLVM).
-          CIBW_TEST_COMMAND: >-
-            python -c "from stflow._mlir._mlir_libs import _streamhls; print('ok')"
+      - name: Prepare
+        id: prep
+        run: |
+          git config --global --add safe.directory '*'
+          echo "llvm=$(git ls-tree HEAD extern/llvm-project | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+      - name: Cache LLVM/MLIR
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/llvm-stflow
+          key: llvm-manylinux_2_28-${{ steps.prep.outputs.llvm }}-${{ hashFiles('scripts/build_llvm.sh') }}
+      - name: Build LLVM/MLIR (first run only)
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          $PY -m venv /tmp/llvm-venv && . /tmp/llvm-venv/bin/activate
+          LLVM_CMAKE_BUILD_DIR=/mnt/llvm-build NUM_THREADS=$(nproc) \
+            bash scripts/build_llvm.sh "$LLVM_PREFIX"
+          rm -rf /mnt/llvm-build
+      - name: Build the wheel
+        run: |
+          $PY -m venv /tmp/build-venv && . /tmp/build-venv/bin/activate
+          STFLOW_LLVM_DIR="$LLVM_PREFIX" STFLOW_FETCH_LLVM=OFF \
+            pip wheel . --no-deps -w dist-raw -v
+          auditwheel repair -w wheelhouse dist-raw/*.whl
+          ls -la wheelhouse
+      - name: Test the wheel in a fresh environment
+        run: |
+          $PY -m venv /tmp/test-venv && . /tmp/test-venv/bin/activate
+          pip install wheelhouse/*.whl
+          cd / && python -c "from stflow._mlir._mlir_libs import _streamhls; print('ok')"
       - uses: actions/upload-artifact@v4
         with:
           name: wheel
