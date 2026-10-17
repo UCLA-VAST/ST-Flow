@@ -76,7 +76,7 @@ not work on your system; every tier ends with the same installed `stflow` packag
 
 | Tier | Command | Needs | Time |
 |---|---|---|---|
-| **1. Prebuilt wheel** | `pip install stflow` | Linux x86_64 with glibc ≥ 2.28 (Ubuntu 20.04+, Debian 10+, RHEL/Rocky 8+) | ~1 min |
+| **1. Prebuilt wheel** | `pip install st-flow` | Linux x86_64 with glibc ≥ 2.28 (Ubuntu 20.04+, Debian 10+, RHEL/Rocky 8+) | ~1 min |
 | **2. From source, prebuilt LLVM** | `pip install .` | Linux x86_64 with GCC ≥ 12's C++ runtime (Ubuntu 22.04+, Debian 12+), plus a C/C++ toolchain | ~10–20 min |
 | **3. From source, LLVM too** | `scripts/build_llvm.sh`, then `pip install .` | any Linux x86_64 with a C++17 compiler | 1–2 h |
 
@@ -97,7 +97,7 @@ python3.12 -m venv ~/.venvs/stflow && source ~/.venvs/stflow/bin/activate
 ### Tier 1 — prebuilt wheel
 
 ```bash
-pip install stflow
+pip install st-flow
 pip install -r https://raw.githubusercontent.com/UCLA-VAST/ST-Flow/main/requirements-ml.txt
 ```
 
@@ -106,6 +106,9 @@ The second line installs the pinned PyTorch front end (`torch`, `torchvision`,
 [Pinned ML toolchain](#pinned-ml-toolchain) for why it cannot come from PyPI. If pip
 reports that no wheel matches your platform, it falls back to building from source,
 which is Tier 2.
+
+The PyPI distribution is named `st-flow`; the Python package and the command are
+`stflow`, as in every other tier.
 
 ### Tier 2 — from source, with the prebuilt LLVM/MLIR
 

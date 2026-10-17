@@ -6,7 +6,7 @@
 # extensions find each other through RUNPATH $ORIGIN. No LLVM is needed at runtime.
 #
 # Installation tiers (see the installation guide):
-#   1. pip install stflow           prebuilt wheel from PyPI
+#   1. pip install st-flow          prebuilt wheel from PyPI
 #   2. pip install .                build from a checkout against the prebuilt
 #                                   LLVM/MLIR (found locally or downloaded)
 #   3. scripts/build_llvm.sh, then  build LLVM/MLIR from extern/llvm-project first
@@ -19,7 +19,7 @@ requires = ["scikit-build-core>=0.10", "pybind11>=2.10,<3"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "stflow"
+name = "st-flow"
 version = "1.0.0"
 description = "ST-Flow: a hardware compiler for automating spatial-temporal dataflow acceleration on FPGAs"
 readme = "README.md"
@@ -65,7 +65,7 @@ test = ["pytest", "pytest-xdist", "pytest-timeout", "transformers==4.51.0"]
 # matplotlib is pinned to the version that produced the paper's figures.
 ae = ["matplotlib==3.10.5", "pandas", "scipy", "tabulate", "rich", "xmltodict"]
 # Development tooling.
-dev = ["stflow[test,ae]", "black==24.8.0", "pylint==3.0.2", "clang-format"]
+dev = ["st-flow[test,ae]", "black==24.8.0", "pylint==3.0.2", "clang-format"]
 
 [project.urls]
 Homepage = "https://github.com/UCLA-VAST/ST-Flow"
