@@ -21,7 +21,7 @@ reproducibility checklist) and [`docs/ae/artifact_appendix.tex`](docs/ae/artifac
 
 > **Version note.** This guide describes the evaluated revision, git tag `PACT26`
 > (`git checkout PACT26`), identical to the Zenodo record. Later revisions install
-> differently (`pip install st-flow`; see [README.md](README.md#building-and-running)).
+> differently (`pip install st-flow`; see [README.md](README.md#installation)).
 
 ---
 
@@ -213,7 +213,7 @@ Expected — these are the numbers quoted in §5.2:
 ### 4. Optional: build the compiler (~15-30 min)
 
 Only needed for Tiers 1, 3 and 4. Full instructions, prerequisites and troubleshooting
-are in [README.md](README.md#building-and-running). The short version:
+are in [DEVELOPMENT.md](DEVELOPMENT.md#building-from-source). The short version:
 
 ```bash
 mkdir -p ~/opt && tar xzf llvm-stflow-ubuntu-latest.tar.gz -C ~/opt   # from the record
@@ -227,7 +227,7 @@ python -c "from stflow._mlir._mlir_libs import _streamhls; import stflow.main; p
 If the prebuilt LLVM/MLIR tarball doesn't run on your machine (e.g. a glibc or OS mismatch),
 build LLVM/MLIR yourself from `extern/llvm-project` instead: it's the pinned submodule at the
 matching commit, so the same CMake/Ninja flow works, but expect **hours**, not ~15-30 minutes —
-see [README.md](README.md#step-1--llvmmlir) for the full procedure.
+see [DEVELOPMENT.md](DEVELOPMENT.md#building-llvmmlir-from-source-too) for the full procedure.
 
 ---
 

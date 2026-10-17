@@ -29,18 +29,18 @@ myst_enable_extensions = ["colon_fence", "deflist", "attrs_inline"]
 # ---------------------------------------------------------------------------
 # Links into the repository.
 #
-# README.md and ARTIFACT_EVALUATION.md are included verbatim from the repo root, so
-# that GitHub, the Zenodo tarball and this site all show the same text. Their links
-# to repository files (README.md, docs/ae/checklist.md, ...) are rewritten here to
-# GitHub URLs at the version being built: a branch or tag on Read the Docs, `main`
-# locally.
+# README.md, DEVELOPMENT.md and ARTIFACT_EVALUATION.md are included verbatim from the
+# repo root, so that GitHub, the Zenodo tarball and this site all show the same text.
+# Their links to repository files (README.md, docs/ae/checklist.md, ...) are rewritten
+# here to GitHub URLs at the version being built: a branch or tag on Read the Docs,
+# `main` locally.
 # ---------------------------------------------------------------------------
 GITHUB = "https://github.com/UCLA-VAST/ST-Flow"
 GIT_REF = os.environ.get("READTHEDOCS_GIT_IDENTIFIER", "main")
 
 _REPO_LINK = re.compile(
     r"\]\((?!https?://|#|mailto:)"
-    r"((?:README|ARTIFACT_EVALUATION|LICENSE|NOTICE|CITATION)[^)]*"
+    r"((?:README|DEVELOPMENT|ARTIFACT_EVALUATION|LICENSE|NOTICE|CITATION)[^)]*"
     r"|(?:docs|scripts|stflow|test|mlir|extern|PACT26_Artifacts)/[^)]*)\)"
 )
 
@@ -52,24 +52,17 @@ def _to_github(match):
     return f"]({GITHUB}/{kind}/{GIT_REF}/{target if kind == 'blob' else path})"
 
 
-# README anchors whose section is its own page on this site.
-_README_SECTIONS = {
-    "(#building-and-running)": "(installation.md)",
+# Links between included sections that sit on the same page of this site.
+_SAME_PAGE_LINKS = {
+    "[DEVELOPMENT.md](DEVELOPMENT.md)": "[Building from source](#building-from-source)",
 }
 
 
-# Pages whose included README section sits one heading level deeper than the page
-# title (the section's own "## ..." heading is replaced by the page title).
-_PROMOTE_HEADINGS = {"installation"}
-
-
 def _rewrite_repo_links(app, relative_path, parent_docname, content):
-    text = _REPO_LINK.sub(_to_github, content[0])
-    for anchor, page in _README_SECTIONS.items():
-        text = text.replace(anchor, page)
-    if parent_docname in _PROMOTE_HEADINGS:
-        text = re.sub(r"(?m)^#(#{2,}) ", r"\1 ", text)
-    content[0] = text
+    text = content[0]
+    for link, anchor in _SAME_PAGE_LINKS.items():
+        text = text.replace(link, anchor)
+    content[0] = _REPO_LINK.sub(_to_github, text)
 
 
 def setup(app):
