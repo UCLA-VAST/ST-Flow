@@ -5,9 +5,6 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21881993.svg)](https://doi.org/10.5281/zenodo.21881993)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Documentation:** <https://st-flow.readthedocs.io> ·
-**Paper artifact (PACT '26):** <https://doi.org/10.5281/zenodo.21881993>
-
 <!-- docs:overview:start -->
 ST-Flow compiles PyTorch models and affine programs, through
 [MLIR](https://mlir.llvm.org), into streaming dataflow accelerators for FPGAs. Instead of
